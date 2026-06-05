@@ -1,0 +1,31 @@
+[settings]
+experimental = true
+lockfile = true
+pin = true
+
+[tools]
+"aqua:jdx/usage" = "3.3.0"
+"aqua:jdx/hk" = "1.45.0"
+"aqua:apple/pkl" = "0.31.0"
+"aqua:dprint/dprint" = "0.53.2"
+"core:rust" = { version = "1.95.0", profile = "minimal", components = "rustfmt,clippy" }
+"core:swift" = { version = "6.3.1", os = ["macos"] }
+swiftformat = "0.61.1"
+
+[hooks]
+postinstall = ["hk install --mise --quiet", "cargo fetch"]
+
+[tasks.build]
+run = ["cargo build", "swift build --package-path apps/macos"]
+
+[tasks.test]
+run = ["cargo test", "swift test --package-path apps/macos"]
+
+[tasks.check]
+run = "hk check --all"
+
+[tasks.fix]
+run = "hk fix --all"
+
+[tasks.run]
+run = "swift run --package-path apps/macos BrainDrain"

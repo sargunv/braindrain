@@ -1,0 +1,44 @@
+amends "package://github.com/jdx/hk/releases/download/v1.45.0/hk@1.45.0#/Config.pkl"
+
+import "package://github.com/jdx/hk/releases/download/v1.45.0/hk@1.45.0#/Builtins.pkl"
+
+local lintSteps = new Mapping<String, Step> {
+  ["dprint"] = (Builtins.dprint) {
+    batch = true
+  }
+  ["cargo-fmt"] {
+    glob = List("**/*.rs")
+    check = "cargo fmt --check"
+    fix = "cargo fmt"
+  }
+  ["cargo-clippy"] {
+    glob = List("**/*.rs")
+    check = "cargo clippy --all-targets --all-features -- -D warnings"
+    fix = "cargo clippy --fix --all-targets --all-features --allow-dirty -- -D warnings"
+  }
+  ["swift-build"] {
+    glob = List("apps/macos/**/*.swift", "apps/macos/Package.swift")
+    check = "cd apps/macos && swift build"
+  }
+}
+
+hooks {
+  ["pre-commit"] {
+    fix = true
+    stash = "git"
+    steps {
+      ...lintSteps
+    }
+  }
+  ["check"] {
+    steps {
+      ...lintSteps
+    }
+  }
+  ["fix"] {
+    fix = true
+    steps {
+      ...lintSteps
+    }
+  }
+}

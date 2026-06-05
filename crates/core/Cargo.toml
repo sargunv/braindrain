@@ -1,0 +1,11 @@
+[package]
+name = "braindrain-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[dependencies]
+serde = { workspace = true }
