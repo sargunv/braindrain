@@ -4,6 +4,7 @@
 DerivedData/
 crates/bindings-uniffi/.generated/
 build/
+dist/
 target/
 
 *.log

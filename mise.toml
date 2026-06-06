@@ -45,12 +45,20 @@ run = [
 
 [tasks.macos-build]
 depends = ["ffi-swift"]
-run = "swift build --package-path apps/macos"
+run = "CLANG_MODULE_CACHE_PATH=build/macos/debug/clang-module-cache swift build --package-path apps/macos --scratch-path build/macos/debug/swiftpm --cache-path build/macos/debug/swiftpm-cache --config-path build/macos/debug/swiftpm-config --security-path build/macos/debug/swiftpm-security --disable-sandbox"
 
 [tasks.macos-test]
 depends = ["ffi-swift"]
-run = "swift test --package-path apps/macos"
+run = "CLANG_MODULE_CACHE_PATH=build/macos/debug/clang-module-cache swift test --package-path apps/macos --scratch-path build/macos/debug/swiftpm --cache-path build/macos/debug/swiftpm-cache --config-path build/macos/debug/swiftpm-config --security-path build/macos/debug/swiftpm-security --disable-sandbox"
 
 [tasks.macos-run]
 depends = ["ffi-swift"]
-run = "swift run --package-path apps/macos BrainDrain"
+run = "CLANG_MODULE_CACHE_PATH=build/macos/debug/clang-module-cache swift run --package-path apps/macos --scratch-path build/macos/debug/swiftpm --cache-path build/macos/debug/swiftpm-cache --config-path build/macos/debug/swiftpm-config --security-path build/macos/debug/swiftpm-security --disable-sandbox BrainDrain"
+
+[tasks.macos-package]
+description = "Build apps/macos into an unsigned release zip"
+run = "scripts/package-macos.sh package"
+
+[tasks.macos-release]
+description = "Build, Developer ID sign, notarize, staple, and zip apps/macos"
+run = "scripts/package-macos.sh release"

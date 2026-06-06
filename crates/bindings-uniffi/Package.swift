@@ -7,7 +7,9 @@ let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
 let repositoryRoot = packageRoot
     .deletingLastPathComponent()
     .deletingLastPathComponent()
-let rustTargetDebug = repositoryRoot.appendingPathComponent("target/debug").path
+let defaultRustLibraryDir = repositoryRoot.appendingPathComponent("target/debug").path
+let rustLibraryDir = ProcessInfo.processInfo.environment["BRAINDRAIN_RUST_LIBRARY_DIR"] ?? defaultRustLibraryDir
+let rustRuntimeLibraryDir = ProcessInfo.processInfo.environment["BRAINDRAIN_RUST_RPATH"] ?? rustLibraryDir
 
 let package = Package(
     name: "BrainDrainBindings",
@@ -31,9 +33,9 @@ let package = Package(
             linkerSettings: [
                 .linkedLibrary("braindrain_bindings_uniffi"),
                 .unsafeFlags([
-                    "-L\(rustTargetDebug)",
+                    "-L\(rustLibraryDir)",
                     "-Xlinker", "-rpath",
-                    "-Xlinker", rustTargetDebug,
+                    "-Xlinker", rustRuntimeLibraryDir,
                 ]),
             ]
         ),
