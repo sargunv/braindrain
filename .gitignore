@@ -2,6 +2,7 @@
 .build/
 .swiftpm/
 DerivedData/
+crates/bindings-uniffi/.generated/
 build/
 target/
 

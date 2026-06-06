@@ -18,7 +18,7 @@ local lintSteps = new Mapping<String, Step> {
   }
   ["swift-build"] {
     glob = List("apps/macos/**/*.swift", "apps/macos/Package.swift")
-    check = "cd apps/macos && swift build"
+    check = "mise run macos-build"
   }
 }
 

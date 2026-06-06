@@ -16,10 +16,12 @@ swiftformat = "0.61.1"
 postinstall = ["hk install --mise --quiet", "cargo fetch"]
 
 [tasks.build]
-run = ["cargo build", "swift build --package-path apps/macos"]
+depends = ["macos-build"]
+run = "cargo build"
 
 [tasks.test]
-run = ["cargo test", "swift test --package-path apps/macos"]
+depends = ["macos-test"]
+run = "cargo test"
 
 [tasks.check]
 run = "hk check --all"
@@ -28,14 +30,27 @@ run = "hk check --all"
 run = "hk fix --all"
 
 [tasks.run]
-run = "swift run --package-path apps/macos BrainDrain"
+depends = ["macos-run"]
 
 [tasks.cli]
 run = "cargo run -p braindrain-cli --"
 
 [tasks.ffi-swift]
 run = [
-  "rm -rf build/uniffi/swift",
+  "rm -rf crates/bindings-uniffi/.generated",
+  "mkdir -p crates/bindings-uniffi/.generated/swift",
   "cargo build -p braindrain-bindings-uniffi",
-  "cargo run -p braindrain-uniffi-bindgen -- generate --library target/debug/libbraindrain_bindings_uniffi.dylib --language swift --out-dir build/uniffi/swift",
+  "cargo run -p braindrain-uniffi-bindgen -- generate --library target/debug/libbraindrain_bindings_uniffi.dylib --language swift --out-dir crates/bindings-uniffi/.generated/swift",
 ]
+
+[tasks.macos-build]
+depends = ["ffi-swift"]
+run = "swift build --package-path apps/macos"
+
+[tasks.macos-test]
+depends = ["ffi-swift"]
+run = "swift test --package-path apps/macos"
+
+[tasks.macos-run]
+depends = ["ffi-swift"]
+run = "swift run --package-path apps/macos BrainDrain"

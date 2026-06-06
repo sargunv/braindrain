@@ -8,9 +8,15 @@ let package = Package(
     products: [
         .executable(name: "BrainDrain", targets: ["BrainDrainApp"]),
     ],
+    dependencies: [
+        .package(path: "../../crates/bindings-uniffi"),
+    ],
     targets: [
         .executableTarget(
             name: "BrainDrainApp",
+            dependencies: [
+                .product(name: "BrainDrainBindings", package: "bindings-uniffi"),
+            ],
             linkerSettings: [
                 .linkedFramework("SwiftUI"),
             ]
