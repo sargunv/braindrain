@@ -168,10 +168,11 @@ struct QuotaRow: View {
 
                 Spacer(minLength: 8)
 
-                if let detailText {
-                    Text(detailText)
+                if let resetDate {
+                    Text(relativeResetText(for: resetDate))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                        .help("Resets \(exactResetText(for: resetDate))")
                 }
 
                 Text(percentText)
@@ -194,14 +195,14 @@ struct QuotaRow: View {
         "\(Int(window.usedPercent.rounded()))%"
     }
 
-    private var detailText: String? {
+    private var resetDate: Date? {
         guard let resetsAt = window.resetsAt,
               let date = parseRFC3339(resetsAt)
         else {
             return nil
         }
 
-        return date.formatted(date: .abbreviated, time: .shortened)
+        return date
     }
 }
 
@@ -234,4 +235,15 @@ private func parseRFC3339(_ value: String) -> Date? {
     let formatter = ISO8601DateFormatter()
     formatter.formatOptions = [.withInternetDateTime]
     return formatter.date(from: value)
+}
+
+private func relativeResetText(for date: Date) -> String {
+    let formatter = RelativeDateTimeFormatter()
+    formatter.unitsStyle = .full
+    formatter.dateTimeStyle = .numeric
+    return formatter.localizedString(for: date, relativeTo: Date())
+}
+
+private func exactResetText(for date: Date) -> String {
+    date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().year().hour().minute())
 }
