@@ -17,7 +17,6 @@ pub struct ProviderId(String);
 impl ProviderId {
     pub const OPENAI: &'static str = "openai";
     pub const CURSOR: &'static str = "cursor";
-    pub const OPENCODE_GO: &'static str = "opencode-go";
 
     pub fn new(id: impl Into<String>) -> Self {
         Self(id.into())
@@ -29,10 +28,6 @@ impl ProviderId {
 
     pub fn cursor() -> Self {
         Self::new(Self::CURSOR)
-    }
-
-    pub fn opencode_go() -> Self {
-        Self::new(Self::OPENCODE_GO)
     }
 
     pub fn as_str(&self) -> &str {
@@ -67,6 +62,7 @@ pub struct ProviderSnapshot {
     pub source: ProviderSource,
     pub usage: UsageSnapshot,
     pub identity: Option<AccountIdentity>,
+    #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
 }
 
@@ -92,6 +88,7 @@ pub struct RateWindow {
     pub used_percent: f64,
     #[serde(default, rename = "duration_seconds", with = "duration_seconds_option")]
     pub duration: Option<Duration>,
+    #[serde(default, with = "time::serde::rfc3339::option")]
     pub resets_at: Option<OffsetDateTime>,
 }
 
@@ -200,5 +197,37 @@ mod tests {
 
         let json = serde_json::to_value(window).expect("serialize window");
         assert_eq!(json["duration_seconds"], 18_000);
+    }
+
+    #[test]
+    fn snapshot_timestamps_serialize_as_rfc3339() {
+        let updated_at =
+            OffsetDateTime::from_unix_timestamp(1_780_704_000).expect("valid updated timestamp");
+        let resets_at =
+            OffsetDateTime::from_unix_timestamp(1_781_980_358).expect("valid reset timestamp");
+        let snapshot = ProviderSnapshot {
+            provider: ProviderId::cursor(),
+            source: ProviderSource::Cli,
+            usage: UsageSnapshot {
+                windows: vec![RateWindow {
+                    id: "total".to_owned(),
+                    label: "Total".to_owned(),
+                    used_percent: 45.0,
+                    duration: None,
+                    resets_at: Some(resets_at),
+                }],
+                balances: Vec::new(),
+            },
+            identity: None,
+            updated_at,
+        };
+
+        let json = serde_json::to_value(snapshot).expect("serialize snapshot");
+
+        assert_eq!(json["updated_at"], "2026-06-06T00:00:00Z");
+        assert_eq!(
+            json["usage"]["windows"][0]["resets_at"],
+            "2026-06-20T18:32:38Z"
+        );
     }
 }

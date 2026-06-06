@@ -123,6 +123,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "braindrain-core",
+ "braindrain-providers-cursor",
  "braindrain-providers-openai",
  "clap",
  "serde_json",
@@ -138,6 +139,21 @@ dependencies = [
  "serde_json",
  "thiserror",
  "time",
+]
+
+[[package]]
+name = "braindrain-providers-cursor"
+version = "0.1.0"
+dependencies = [
+ "braindrain-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "time",
+ "tokio",
+ "url",
+ "wiremock",
 ]
 
 [[package]]

@@ -2,6 +2,7 @@
 members = [
   "crates/cli",
   "crates/core",
+  "crates/providers-cursor",
   "crates/providers-openai",
 ]
 resolver = "3"

@@ -1,5 +1,8 @@
 use anyhow::{Context, bail};
 use braindrain_core::{Provider, ProviderId, RefreshContext};
+use braindrain_providers_cursor::{CURSOR_AUTH_TOKEN_ENV, CursorAccessTokenSource, CursorProvider};
+#[cfg(target_os = "macos")]
+use braindrain_providers_cursor::{CURSOR_KEYCHAIN_ACCOUNT, CURSOR_KEYCHAIN_SERVICE};
 use braindrain_providers_openai::OpenAiProvider;
 use clap::{Parser, Subcommand};
 
@@ -38,11 +41,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn list_providers() -> anyhow::Result<()> {
-    for provider in [
-        ProviderId::openai(),
-        ProviderId::cursor(),
-        ProviderId::opencode_go(),
-    ] {
+    for provider in [ProviderId::openai(), ProviderId::cursor()] {
         println!("{}", provider.as_str());
     }
     Ok(())
@@ -51,6 +50,7 @@ fn list_providers() -> anyhow::Result<()> {
 fn info_provider(provider: &str) -> anyhow::Result<()> {
     match normalize_provider(provider).as_str() {
         ProviderId::OPENAI => info_openai(),
+        ProviderId::CURSOR => info_cursor(),
         provider => bail!("provider info is not implemented for {provider}"),
     }
 }
@@ -58,6 +58,7 @@ fn info_provider(provider: &str) -> anyhow::Result<()> {
 async fn check_provider(provider: &str) -> anyhow::Result<()> {
     match normalize_provider(provider).as_str() {
         ProviderId::OPENAI => check_openai().await,
+        ProviderId::CURSOR => check_cursor().await,
         provider => bail!("provider check is not implemented for {provider}"),
     }
 }
@@ -104,12 +105,54 @@ fn info_openai() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn info_cursor() -> anyhow::Result<()> {
+    let provider = CursorProvider::default();
+    println!("provider={}", ProviderId::CURSOR);
+    println!("api_base_url={}", provider.config().api_base_url);
+    println!("env_token={CURSOR_AUTH_TOKEN_ENV}");
+    #[cfg(target_os = "macos")]
+    {
+        println!("keychain_service={CURSOR_KEYCHAIN_SERVICE}");
+        println!("keychain_account={CURSOR_KEYCHAIN_ACCOUNT}");
+    }
+
+    match provider.auth_token() {
+        Ok(token) => {
+            println!("auth_found=true");
+            println!(
+                "auth_source={}",
+                match token.source {
+                    CursorAccessTokenSource::Environment(name) => name,
+                    CursorAccessTokenSource::MacosKeychain => "macos-keychain",
+                    CursorAccessTokenSource::Config => "config",
+                }
+            );
+        }
+        Err(error) => {
+            println!("auth_found=false");
+            println!("auth_error={error}");
+        }
+    }
+
+    Ok(())
+}
+
 async fn check_openai() -> anyhow::Result<()> {
     let provider = OpenAiProvider::default();
     let snapshot = provider
         .refresh(RefreshContext::default())
         .await
         .context("failed to refresh OpenAI provider")?;
+    println!("{}", serde_json::to_string_pretty(&snapshot)?);
+    Ok(())
+}
+
+async fn check_cursor() -> anyhow::Result<()> {
+    let provider = CursorProvider::default();
+    let snapshot = provider
+        .refresh(RefreshContext::default())
+        .await
+        .context("failed to refresh Cursor provider")?;
     println!("{}", serde_json::to_string_pretty(&snapshot)?);
     Ok(())
 }
