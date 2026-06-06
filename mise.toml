@@ -29,3 +29,6 @@ run = "hk fix --all"
 
 [tasks.run]
 run = "swift run --package-path apps/macos BrainDrain"
+
+[tasks.cli]
+run = "cargo run -p braindrain-cli --"
