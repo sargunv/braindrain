@@ -1,0 +1,18 @@
+[package]
+name = "braindrain-providers-openai"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+braindrain-core = { path = "../core" }
+jsonwebtoken = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

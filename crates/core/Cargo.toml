@@ -8,4 +8,10 @@ license.workspace = true
 crate-type = ["lib", "staticlib", "cdylib"]
 
 [dependencies]
+directories = { workspace = true }
 serde = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

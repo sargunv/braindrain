@@ -1,23 +1,186 @@
-use serde::{Deserialize, Serialize};
+use std::future::Future;
+use std::path::PathBuf;
+use std::pin::Pin;
+use std::time::Duration;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BrainDrainState {
-    pub title: String,
+use directories::ProjectDirs;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+use time::OffsetDateTime;
+
+pub type ProviderFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ProviderId(String);
+
+impl ProviderId {
+    pub const OPENAI: &'static str = "openai";
+    pub const CURSOR: &'static str = "cursor";
+    pub const OPENCODE_GO: &'static str = "opencode-go";
+
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    pub fn openai() -> Self {
+        Self::new(Self::OPENAI)
+    }
+
+    pub fn cursor() -> Self {
+        Self::new(Self::CURSOR)
+    }
+
+    pub fn opencode_go() -> Self {
+        Self::new(Self::OPENCODE_GO)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
-impl Default for BrainDrainState {
-    fn default() -> Self {
+impl From<&str> for ProviderId {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<String> for ProviderId {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProviderSource {
+    OAuth,
+    Cli,
+    Web,
+    Local,
+    Manual,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProviderSnapshot {
+    pub provider: ProviderId,
+    pub source: ProviderSource,
+    pub usage: UsageSnapshot,
+    pub identity: Option<AccountIdentity>,
+    pub updated_at: OffsetDateTime,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UsageSnapshot {
+    pub windows: Vec<RateWindow>,
+    pub balances: Vec<BalanceSnapshot>,
+}
+
+impl UsageSnapshot {
+    pub fn empty() -> Self {
         Self {
-            title: "BrainDrain".to_owned(),
+            windows: Vec::new(),
+            balances: Vec::new(),
         }
     }
 }
 
-impl BrainDrainState {
-    pub fn new(title: impl Into<String>) -> Self {
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RateWindow {
+    pub id: String,
+    pub label: String,
+    pub used_percent: f64,
+    #[serde(default, rename = "duration_seconds", with = "duration_seconds_option")]
+    pub duration: Option<Duration>,
+    pub resets_at: Option<OffsetDateTime>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BalanceSnapshot {
+    pub id: String,
+    pub label: String,
+    pub remaining: f64,
+    pub unit: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountIdentity {
+    pub email: Option<String>,
+    pub plan: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RefreshContext {
+    pub now: OffsetDateTime,
+}
+
+impl Default for RefreshContext {
+    fn default() -> Self {
         Self {
-            title: title.into(),
+            now: OffsetDateTime::now_utc(),
         }
+    }
+}
+
+pub trait Provider: Send + Sync {
+    fn id(&self) -> ProviderId;
+    fn refresh<'a>(
+        &'a self,
+        context: RefreshContext,
+    ) -> ProviderFuture<'a, Result<ProviderSnapshot, ProviderError>>;
+}
+
+#[derive(Debug, Error)]
+pub enum ProviderError {
+    #[error("provider is not configured: {0}")]
+    NotConfigured(String),
+    #[error("authentication failed: {0}")]
+    Authentication(String),
+    #[error("network error: {0}")]
+    Network(String),
+    #[error("parse error: {0}")]
+    Parse(String),
+    #[error("unsupported operation: {0}")]
+    Unsupported(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppPaths {
+    pub config_dir: PathBuf,
+    pub cache_dir: PathBuf,
+    pub data_dir: PathBuf,
+}
+
+impl AppPaths {
+    pub fn discover() -> Option<Self> {
+        let dirs = ProjectDirs::from("dev", "sargunv", "braindrain")?;
+        Some(Self {
+            config_dir: dirs.config_dir().to_path_buf(),
+            cache_dir: dirs.cache_dir().to_path_buf(),
+            data_dir: dirs.data_dir().to_path_buf(),
+        })
+    }
+}
+
+mod duration_seconds_option {
+    use std::time::Duration;
+
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(duration: &Option<Duration>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        duration
+            .map(|duration| duration.as_secs())
+            .serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Duration>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Option::<u64>::deserialize(deserializer).map(|duration| duration.map(Duration::from_secs))
     }
 }
 
@@ -26,7 +189,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_title_is_app_name() {
-        assert_eq!(BrainDrainState::default().title, "BrainDrain");
+    fn rate_window_serializes_duration_as_seconds() {
+        let window = RateWindow {
+            id: "5h".to_owned(),
+            label: "5-hour".to_owned(),
+            used_percent: 42.0,
+            duration: Some(Duration::from_secs(5 * 60 * 60)),
+            resets_at: None,
+        };
+
+        let json = serde_json::to_value(window).expect("serialize window");
+        assert_eq!(json["duration_seconds"], 18_000);
     }
 }
