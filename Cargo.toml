@@ -1,9 +1,12 @@
 [workspace]
 members = [
+  "crates/bindings-uniffi",
   "crates/cli",
   "crates/core",
   "crates/providers-cursor",
   "crates/providers-openai",
+  "crates/service",
+  "crates/uniffi-bindgen",
 ]
 resolver = "3"
 
@@ -27,5 +30,6 @@ tempfile = "3.27.0"
 thiserror = "2.0.18"
 time = { version = "0.3.47", features = ["formatting", "parsing", "serde"] }
 tokio = { version = "1.52.3", features = ["macros", "rt-multi-thread"] }
+uniffi = "0.31.1"
 url = "2.5.8"
 wiremock = "0.6.5"

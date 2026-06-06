@@ -1,0 +1,11 @@
+[package]
+name = "braindrain-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+braindrain-core = { path = "../core" }
+braindrain-providers-cursor = { path = "../providers-cursor" }
+braindrain-providers-openai = { path = "../providers-openai" }
+thiserror = { workspace = true }

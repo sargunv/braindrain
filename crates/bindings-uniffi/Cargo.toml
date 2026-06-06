@@ -1,0 +1,16 @@
+[package]
+name = "braindrain-bindings-uniffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[dependencies]
+braindrain-core = { path = "../core" }
+braindrain-service = { path = "../service" }
+thiserror = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true }
+uniffi = { workspace = true, features = ["tokio"] }

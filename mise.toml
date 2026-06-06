@@ -32,3 +32,10 @@ run = "swift run --package-path apps/macos BrainDrain"
 
 [tasks.cli]
 run = "cargo run -p braindrain-cli --"
+
+[tasks.ffi-swift]
+run = [
+  "rm -rf build/uniffi/swift",
+  "cargo build -p braindrain-bindings-uniffi",
+  "cargo run -p braindrain-uniffi-bindgen -- generate --library target/debug/libbraindrain_bindings_uniffi.dylib --language swift --out-dir build/uniffi/swift",
+]
