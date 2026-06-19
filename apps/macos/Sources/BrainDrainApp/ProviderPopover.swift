@@ -3,6 +3,8 @@ import BrainDrainBindings
 import SwiftUI
 
 struct ProviderPopover: View {
+    private static let visibilityRefreshMinimumAge: TimeInterval = 10
+
     @Bindable var model: ProviderListModel
 
     var body: some View {
@@ -31,6 +33,17 @@ struct ProviderPopover: View {
             footer
         }
         .frame(width: 360)
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+            guard let window = notification.object as? NSWindow,
+                  window.isVisible
+            else {
+                return
+            }
+
+            Task {
+                await model.refreshIfStale(minimumAge: Self.visibilityRefreshMinimumAge)
+            }
+        }
     }
 
     private var header: some View {

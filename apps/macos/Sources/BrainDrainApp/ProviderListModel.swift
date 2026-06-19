@@ -24,6 +24,32 @@ final class ProviderListModel {
         return providers.first
     }
 
+    func refreshIfStale(minimumAge: TimeInterval) async {
+        guard !isRefreshing else {
+            return
+        }
+
+        if let lastRefresh,
+           Date().timeIntervalSince(lastRefresh) < minimumAge
+        {
+            return
+        }
+
+        await refreshAll()
+    }
+
+    func runPeriodicRefresh(every interval: TimeInterval) async {
+        while !Task.isCancelled {
+            do {
+                try await Task.sleep(for: .seconds(interval))
+            } catch {
+                return
+            }
+
+            await refreshIfStale(minimumAge: interval)
+        }
+    }
+
     func refreshAll() async {
         guard !isRefreshing else {
             return
