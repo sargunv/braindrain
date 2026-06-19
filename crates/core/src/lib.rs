@@ -70,6 +70,7 @@ pub struct ProviderSnapshot {
 pub struct UsageSnapshot {
     pub windows: Vec<RateWindow>,
     pub balances: Vec<BalanceSnapshot>,
+    pub reset_credits: Vec<ResetCreditSnapshot>,
 }
 
 impl UsageSnapshot {
@@ -77,6 +78,7 @@ impl UsageSnapshot {
         Self {
             windows: Vec::new(),
             balances: Vec::new(),
+            reset_credits: Vec::new(),
         }
     }
 }
@@ -98,6 +100,15 @@ pub struct BalanceSnapshot {
     pub label: String,
     pub remaining: f64,
     pub unit: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ResetCreditSnapshot {
+    pub id: String,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub granted_at: Option<OffsetDateTime>,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub expires_at: Option<OffsetDateTime>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -217,6 +228,7 @@ mod tests {
                     resets_at: Some(resets_at),
                 }],
                 balances: Vec::new(),
+                reset_credits: Vec::new(),
             },
             identity: None,
             updated_at,

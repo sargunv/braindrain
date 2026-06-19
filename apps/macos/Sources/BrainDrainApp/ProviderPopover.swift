@@ -146,15 +146,7 @@ struct ProviderSection: View {
             }
 
             if let snapshot = provider.snapshot {
-                if snapshot.usage.windows.isEmpty {
-                    EmptyUsageView()
-                } else {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(snapshot.usage.windows, id: \.id) { window in
-                            QuotaRow(window: window)
-                        }
-                    }
-                }
+                UsageDetailsView(usage: snapshot.usage)
             } else if let error = provider.errorMessage {
                 Text(error)
                     .font(.caption)
@@ -166,6 +158,38 @@ struct ProviderSection: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
+    }
+}
+
+struct UsageDetailsView: View {
+    let usage: FfiUsageSnapshot
+
+    var body: some View {
+        if usage.windows.isEmpty && usage.balances.isEmpty && usage.resetCredits.isEmpty {
+            EmptyUsageView()
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(usage.windows, id: \.id) { window in
+                    QuotaRow(window: window)
+                }
+
+                ForEach(usage.balances, id: \.id) { balance in
+                    BalanceRow(balance: balance)
+                }
+
+                if !usage.resetCredits.isEmpty {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Quota reset credits")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+
+                        ForEach(usage.resetCredits, id: \.id) { credit in
+                            ResetCreditRow(credit: credit)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -219,6 +243,68 @@ struct QuotaRow: View {
     }
 }
 
+struct BalanceRow: View {
+    let balance: FfiBalanceSnapshot
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(balance.label)
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            Spacer(minLength: 8)
+
+            Text(valueText)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+        }
+        .font(.caption)
+    }
+
+    private var valueText: String {
+        "\(balance.remaining.formatted(.number.precision(.fractionLength(0 ... 2)))) \(balance.unit)"
+    }
+}
+
+struct ResetCreditRow: View {
+    let credit: FfiResetCreditSnapshot
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(grantedText)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+
+            Spacer(minLength: 8)
+
+            Text(expiresText)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .font(.caption2)
+    }
+
+    private var grantedText: String {
+        guard let grantedAt = credit.grantedAt,
+              let grantedDate = parseRFC3339(grantedAt)
+        else {
+            return "Granted unknown"
+        }
+
+        return "Granted \(compactDateText(for: grantedDate))"
+    }
+
+    private var expiresText: String {
+        guard let expiresAt = credit.expiresAt,
+              let expiresDate = parseRFC3339(expiresAt)
+        else {
+            return "Expires unknown"
+        }
+
+        return "Expires \(compactDateText(for: expiresDate))"
+    }
+}
+
 struct EmptyUsageView: View {
     var body: some View {
         Text("No usage data")
@@ -259,4 +345,8 @@ private func relativeResetText(for date: Date) -> String {
 
 private func exactResetText(for date: Date) -> String {
     date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().year().hour().minute())
+}
+
+private func compactDateText(for date: Date) -> String {
+    date.formatted(.dateTime.month(.abbreviated).day().hour().minute())
 }

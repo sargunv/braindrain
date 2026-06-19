@@ -5,10 +5,12 @@ use std::time::Duration;
 
 use braindrain_core::{
     AccountIdentity, BalanceSnapshot, Provider, ProviderError, ProviderFuture, ProviderId,
-    ProviderSnapshot, ProviderSource, RateWindow, RefreshContext, UsageSnapshot,
+    ProviderSnapshot, ProviderSource, RateWindow, RefreshContext, ResetCreditSnapshot,
+    UsageSnapshot,
 };
 use jsonwebtoken::dangerous::insecure_decode;
 use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 use thiserror::Error;
@@ -16,9 +18,13 @@ use time::OffsetDateTime;
 use url::Url;
 
 pub const CHATGPT_WHAM_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
+pub const CHATGPT_WHAM_RESET_CREDITS_URL: &str =
+    "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
 pub const OPENAI_OAUTH_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 
 const CHATGPT_ACCOUNT_ID_HEADER: &str = "ChatGPT-Account-Id";
+const OPENAI_BETA_HEADER: &str = "OpenAI-Beta";
+const ORIGINATOR_HEADER: &str = "originator";
 const CODEX_OAUTH_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_OAUTH_SCOPE: &str = "openid profile email";
 const TOKEN_REFRESH_MAX_AGE: Duration = Duration::from_secs(8 * 24 * 60 * 60);
@@ -108,6 +114,23 @@ impl OpenAiProvider {
         &self,
         auth: &CodexAuth,
     ) -> Result<CodexUsageResponse, OpenAiProviderError> {
+        self.fetch_authorized_json(self.config.usage_url.clone(), auth)
+            .await
+    }
+
+    async fn fetch_reset_credits(
+        &self,
+        auth: &CodexAuth,
+    ) -> Result<CodexResetCreditsResponse, OpenAiProviderError> {
+        self.fetch_authorized_json(self.config.reset_credits_url.clone(), auth)
+            .await
+    }
+
+    async fn fetch_authorized_json<T: DeserializeOwned>(
+        &self,
+        url: Url,
+        auth: &CodexAuth,
+    ) -> Result<T, OpenAiProviderError> {
         if auth.tokens.access_token.is_empty() {
             return Err(OpenAiProviderError::MissingAccessToken);
         }
@@ -115,6 +138,8 @@ impl OpenAiProvider {
         let mut headers = HeaderMap::new();
         headers.insert(USER_AGENT, HeaderValue::from_static("braindrain"));
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
+        headers.insert(OPENAI_BETA_HEADER, HeaderValue::from_static("codex-1"));
+        headers.insert(ORIGINATOR_HEADER, HeaderValue::from_static("Codex Desktop"));
         headers.insert(
             AUTHORIZATION,
             HeaderValue::from_str(&format!("Bearer {}", auth.tokens.access_token)).map_err(
@@ -132,7 +157,7 @@ impl OpenAiProvider {
 
         let response = self
             .client
-            .get(self.config.usage_url.clone())
+            .get(url)
             .headers(headers)
             .send()
             .await
@@ -179,7 +204,10 @@ impl Provider for OpenAiProvider {
                 .map_err(ProviderError::from)?;
             let usage_response = self.fetch_usage(&auth).await.map_err(ProviderError::from)?;
             let identity = usage_response.identity(&auth);
-            let usage = usage_response.usage_snapshot();
+            let mut usage = usage_response.usage_snapshot();
+            if let Ok(reset_credits) = self.fetch_reset_credits(&auth).await {
+                reset_credits.apply_to_usage(&mut usage);
+            }
             Ok(ProviderSnapshot {
                 provider: ProviderId::openai(),
                 source: ProviderSource::OAuth,
@@ -196,6 +224,7 @@ pub struct OpenAiProviderConfig {
     pub codex_home: Option<PathBuf>,
     pub env_codex_home: Option<PathBuf>,
     pub usage_url: Url,
+    pub reset_credits_url: Url,
     pub refresh_url: Url,
 }
 
@@ -217,6 +246,8 @@ impl Default for OpenAiProviderConfig {
             codex_home: None,
             env_codex_home: None,
             usage_url: Url::parse(CHATGPT_WHAM_USAGE_URL).expect("valid ChatGPT usage URL"),
+            reset_credits_url: Url::parse(CHATGPT_WHAM_RESET_CREDITS_URL)
+                .expect("valid ChatGPT reset credits URL"),
             refresh_url: Url::parse(OPENAI_OAUTH_TOKEN_URL).expect("valid OpenAI OAuth token URL"),
         }
     }
@@ -410,7 +441,11 @@ impl CodexUsageResponse {
             balances.push(balance);
         }
 
-        UsageSnapshot { windows, balances }
+        UsageSnapshot {
+            windows,
+            balances,
+            reset_credits: Vec::new(),
+        }
     }
 }
 
@@ -467,6 +502,45 @@ impl CodexCredits {
             unit: "credits".to_owned(),
         })
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CodexResetCreditsResponse {
+    #[serde(default)]
+    pub available_count: u64,
+    #[serde(default)]
+    pub credits: Vec<CodexResetCredit>,
+}
+
+impl CodexResetCreditsResponse {
+    fn apply_to_usage(&self, usage: &mut UsageSnapshot) {
+        usage.balances.push(BalanceSnapshot {
+            id: "reset-credits".to_owned(),
+            label: "Quota resets".to_owned(),
+            remaining: self.available_count as f64,
+            unit: "resets".to_owned(),
+        });
+        usage
+            .reset_credits
+            .extend(
+                self.credits
+                    .iter()
+                    .enumerate()
+                    .map(|(index, credit)| ResetCreditSnapshot {
+                        id: format!("reset-credit-{}", index + 1),
+                        granted_at: credit.granted_at,
+                        expires_at: credit.expires_at,
+                    }),
+            );
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CodexResetCredit {
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub granted_at: Option<OffsetDateTime>,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub expires_at: Option<OffsetDateTime>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -997,6 +1071,34 @@ mod tests {
         );
         assert_eq!(snapshot.balances.len(), 1);
         assert_eq!(snapshot.balances[0].remaining, 12.5);
+        assert!(snapshot.reset_credits.is_empty());
+    }
+
+    #[test]
+    fn reset_credits_response_maps_available_count_and_credit_timestamps() {
+        let response: CodexResetCreditsResponse = serde_json::from_value(serde_json::json!({
+            "available_count": 2,
+            "credits": [
+                {
+                    "granted_at": "2026-06-01T12:00:00Z",
+                    "expires_at": "2026-07-01T12:00:00Z"
+                }
+            ]
+        }))
+        .expect("parse reset credits");
+
+        let mut usage = UsageSnapshot::empty();
+        response.apply_to_usage(&mut usage);
+
+        assert_eq!(usage.balances.len(), 1);
+        assert_eq!(usage.balances[0].id, "reset-credits");
+        assert_eq!(usage.balances[0].remaining, 2.0);
+        assert_eq!(usage.reset_credits.len(), 1);
+        assert_eq!(usage.reset_credits[0].id, "reset-credit-1");
+        assert_eq!(
+            usage.reset_credits[0].expires_at,
+            Some(OffsetDateTime::from_unix_timestamp(1_782_907_200).expect("timestamp"))
+        );
     }
 
     #[tokio::test]
@@ -1013,7 +1115,7 @@ mod tests {
                         invalid-signature",
                     "account_id": "account"
                 },
-                "last_refresh": "2026-06-01T00:00:00Z"
+                "last_refresh": "2099-01-01T00:00:00Z"
             }))
             .expect("auth json"),
         )
@@ -1035,10 +1137,29 @@ mod tests {
             })))
             .mount(&server)
             .await;
+        Mock::given(method("GET"))
+            .and(path("/reset-credits"))
+            .and(header("authorization", "Bearer access"))
+            .and(header(CHATGPT_ACCOUNT_ID_HEADER, "account"))
+            .and(header(OPENAI_BETA_HEADER, "codex-1"))
+            .and(header(ORIGINATOR_HEADER, "Codex Desktop"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "available_count": 1,
+                "credits": [
+                    {
+                        "granted_at": "2026-06-01T12:00:00Z",
+                        "expires_at": "2026-07-01T12:00:00Z"
+                    }
+                ]
+            })))
+            .mount(&server)
+            .await;
 
         let provider = OpenAiProvider::new(OpenAiProviderConfig {
             codex_home: Some(tempdir.path().to_path_buf()),
             usage_url: Url::parse(&format!("{}/usage", server.uri())).expect("usage url"),
+            reset_credits_url: Url::parse(&format!("{}/reset-credits", server.uri()))
+                .expect("reset credits url"),
             refresh_url: Url::parse(&format!("{}/token", server.uri())).expect("refresh url"),
             ..OpenAiProviderConfig::default()
         });
@@ -1057,5 +1178,8 @@ mod tests {
         assert_eq!(snapshot.usage.windows.len(), 1);
         assert_eq!(snapshot.usage.windows[0].id, "5h");
         assert_eq!(snapshot.usage.windows[0].used_percent, 25.0);
+        assert_eq!(snapshot.usage.balances[0].id, "reset-credits");
+        assert_eq!(snapshot.usage.balances[0].remaining, 1.0);
+        assert_eq!(snapshot.usage.reset_credits.len(), 1);
     }
 }

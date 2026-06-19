@@ -263,6 +263,7 @@ impl CursorCurrentPeriodUsageResponse {
         UsageSnapshot {
             windows,
             balances: Vec::new(),
+            reset_credits: Vec::new(),
         }
     }
 }

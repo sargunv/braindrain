@@ -1,7 +1,8 @@
 use std::sync::LazyLock;
 
 use braindrain_core::{
-    AccountIdentity, BalanceSnapshot, ProviderSnapshot, ProviderSource, RateWindow, UsageSnapshot,
+    AccountIdentity, BalanceSnapshot, ProviderSnapshot, ProviderSource, RateWindow,
+    ResetCreditSnapshot, UsageSnapshot,
 };
 use braindrain_service::{self as service, ServiceError};
 use time::OffsetDateTime;
@@ -31,6 +32,7 @@ pub struct FfiProviderSnapshot {
 pub struct FfiUsageSnapshot {
     pub windows: Vec<FfiRateWindow>,
     pub balances: Vec<FfiBalanceSnapshot>,
+    pub reset_credits: Vec<FfiResetCreditSnapshot>,
 }
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
@@ -48,6 +50,13 @@ pub struct FfiBalanceSnapshot {
     pub label: String,
     pub remaining: f64,
     pub unit: String,
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct FfiResetCreditSnapshot {
+    pub id: String,
+    pub granted_at: Option<String>,
+    pub expires_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -115,6 +124,11 @@ impl TryFrom<UsageSnapshot> for FfiUsageSnapshot {
                 .map(FfiRateWindow::try_from)
                 .collect::<Result<_, _>>()?,
             balances: usage.balances.into_iter().map(Into::into).collect(),
+            reset_credits: usage
+                .reset_credits
+                .into_iter()
+                .map(FfiResetCreditSnapshot::try_from)
+                .collect::<Result<_, _>>()?,
         })
     }
 }
@@ -141,6 +155,18 @@ impl From<BalanceSnapshot> for FfiBalanceSnapshot {
             remaining: balance.remaining,
             unit: balance.unit,
         }
+    }
+}
+
+impl TryFrom<ResetCreditSnapshot> for FfiResetCreditSnapshot {
+    type Error = FfiError;
+
+    fn try_from(credit: ResetCreditSnapshot) -> Result<Self, Self::Error> {
+        Ok(Self {
+            id: credit.id,
+            granted_at: credit.granted_at.map(format_time).transpose()?,
+            expires_at: credit.expires_at.map(format_time).transpose()?,
+        })
     }
 }
 
@@ -208,6 +234,11 @@ mod tests {
                     resets_at: Some(resets_at),
                 }],
                 balances: Vec::new(),
+                reset_credits: vec![ResetCreditSnapshot {
+                    id: "reset-credit-1".to_owned(),
+                    granted_at: Some(updated_at),
+                    expires_at: Some(resets_at),
+                }],
             },
             identity: Some(AccountIdentity {
                 email: Some("person@example.com".to_owned()),
@@ -229,6 +260,10 @@ mod tests {
         assert_eq!(
             ffi_snapshot.identity.and_then(|identity| identity.email),
             Some("person@example.com".to_owned())
+        );
+        assert_eq!(
+            ffi_snapshot.usage.reset_credits[0].expires_at,
+            Some("2026-06-20T18:32:38Z".to_owned())
         );
     }
 }
