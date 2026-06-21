@@ -8,4 +8,5 @@ license.workspace = true
 braindrain-core = { path = "../core" }
 braindrain-providers-cursor = { path = "../providers-cursor" }
 braindrain-providers-openai = { path = "../providers-openai" }
+braindrain-providers-zai = { path = "../providers-zai" }
 thiserror = { workspace = true }

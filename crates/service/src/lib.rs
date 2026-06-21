@@ -3,6 +3,7 @@ use braindrain_providers_cursor::{CURSOR_AUTH_TOKEN_ENV, CursorAccessTokenSource
 #[cfg(target_os = "macos")]
 use braindrain_providers_cursor::{CURSOR_KEYCHAIN_ACCOUNT, CURSOR_KEYCHAIN_SERVICE};
 use braindrain_providers_openai::OpenAiProvider;
+use braindrain_providers_zai::{ZAI_API_KEY_ENV, ZaiApiKeySource, ZaiProvider};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
@@ -25,12 +26,17 @@ pub struct ProviderInfoField {
 }
 
 pub fn provider_ids() -> Vec<ProviderId> {
-    vec![ProviderId::openai(), ProviderId::cursor()]
+    vec![
+        ProviderId::openai(),
+        ProviderId::cursor(),
+        ProviderId::zai(),
+    ]
 }
 
 pub fn normalize_provider_id(provider: &str) -> ProviderId {
     match provider {
         "codex" => ProviderId::openai(),
+        "z.ai" => ProviderId::zai(),
         provider => ProviderId::new(provider),
     }
 }
@@ -39,6 +45,7 @@ pub fn info_provider(provider: &str) -> Result<ProviderInfo, ServiceError> {
     match normalize_provider_id(provider).as_str() {
         ProviderId::OPENAI => Ok(info_openai()),
         ProviderId::CURSOR => Ok(info_cursor()),
+        ProviderId::ZAI => Ok(info_zai()),
         provider => Err(ServiceError::UnsupportedProvider {
             provider: provider.to_owned(),
         }),
@@ -53,6 +60,10 @@ pub async fn check_provider(provider: &str) -> Result<ProviderSnapshot, ServiceE
             .await
             .map_err(ServiceError::from),
         ProviderId::CURSOR => CursorProvider::default()
+            .refresh(context)
+            .await
+            .map_err(ServiceError::from),
+        ProviderId::ZAI => ZaiProvider::default()
             .refresh(context)
             .await
             .map_err(ServiceError::from),
@@ -140,6 +151,39 @@ fn info_cursor() -> ProviderInfo {
     info
 }
 
+fn info_zai() -> ProviderInfo {
+    let provider = ZaiProvider::default();
+    let mut info = ProviderInfo::new(ProviderId::zai());
+    info.push(
+        "quota_url",
+        provider.config().resolve_quota_url().to_string(),
+    );
+    info.push("env_api_key", ZAI_API_KEY_ENV);
+    if let Some(path) = provider.config().opencode_auth_path() {
+        info.push("opencode_auth_path", path.display().to_string());
+    }
+
+    match provider.api_key() {
+        Ok(key) => {
+            info.push("auth_found", "true");
+            info.push(
+                "auth_source",
+                match key.source {
+                    ZaiApiKeySource::Environment(name) => name,
+                    ZaiApiKeySource::Opencode => "opencode",
+                    ZaiApiKeySource::Config => "config",
+                },
+            );
+        }
+        Err(error) => {
+            info.push("auth_found", "false");
+            info.push("auth_error", error.to_string());
+        }
+    }
+
+    info
+}
+
 impl ProviderInfo {
     fn new(provider: ProviderId) -> Self {
         Self {
@@ -164,13 +208,19 @@ mod tests {
     fn normalizes_provider_aliases() {
         assert_eq!(normalize_provider_id("codex").as_str(), ProviderId::OPENAI);
         assert_eq!(normalize_provider_id("cursor").as_str(), ProviderId::CURSOR);
+        assert_eq!(normalize_provider_id("z.ai").as_str(), ProviderId::ZAI);
+        assert_eq!(normalize_provider_id("zai").as_str(), ProviderId::ZAI);
     }
 
     #[test]
     fn provider_ids_are_canonical() {
         assert_eq!(
             provider_ids(),
-            vec![ProviderId::openai(), ProviderId::cursor()]
+            vec![
+                ProviderId::openai(),
+                ProviderId::cursor(),
+                ProviderId::zai()
+            ]
         );
     }
 }

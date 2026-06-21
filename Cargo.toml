@@ -5,6 +5,7 @@ members = [
   "crates/core",
   "crates/providers-cursor",
   "crates/providers-openai",
+  "crates/providers-zai",
   "crates/service",
   "crates/uniffi-bindgen",
 ]

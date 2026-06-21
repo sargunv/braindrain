@@ -254,12 +254,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "braindrain-providers-zai"
+version = "0.1.0"
+dependencies = [
+ "braindrain-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "time",
+ "tokio",
+ "url",
+ "wiremock",
+]
+
+[[package]]
 name = "braindrain-service"
 version = "0.1.0"
 dependencies = [
  "braindrain-core",
  "braindrain-providers-cursor",
  "braindrain-providers-openai",
+ "braindrain-providers-zai",
  "thiserror",
 ]
 

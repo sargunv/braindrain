@@ -1,0 +1,19 @@
+[package]
+name = "braindrain-providers-zai"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+braindrain-core = { path = "../core" }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true }
+wiremock = { workspace = true }
