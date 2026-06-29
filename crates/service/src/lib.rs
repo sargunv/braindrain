@@ -1,6 +1,5 @@
 use braindrain_core::{Provider, ProviderError, ProviderId, ProviderSnapshot, RefreshContext};
 use braindrain_providers_cursor::{CURSOR_AUTH_TOKEN_ENV, CursorAccessTokenSource, CursorProvider};
-#[cfg(target_os = "macos")]
 use braindrain_providers_cursor::{CURSOR_KEYCHAIN_ACCOUNT, CURSOR_KEYCHAIN_SERVICE};
 use braindrain_providers_openai::OpenAiProvider;
 use braindrain_providers_zai::{ZAI_API_KEY_ENV, ZaiApiKeySource, ZaiProvider};
@@ -124,11 +123,8 @@ fn info_cursor() -> ProviderInfo {
     let mut info = ProviderInfo::new(ProviderId::cursor());
     info.push("api_base_url", provider.config().api_base_url.to_string());
     info.push("env_token", CURSOR_AUTH_TOKEN_ENV);
-    #[cfg(target_os = "macos")]
-    {
-        info.push("keychain_service", CURSOR_KEYCHAIN_SERVICE);
-        info.push("keychain_account", CURSOR_KEYCHAIN_ACCOUNT);
-    }
+    info.push("keyring_service", CURSOR_KEYCHAIN_SERVICE);
+    info.push("keyring_account", CURSOR_KEYCHAIN_ACCOUNT);
 
     match provider.auth_token() {
         Ok(token) => {
@@ -137,7 +133,7 @@ fn info_cursor() -> ProviderInfo {
                 "auth_source",
                 match token.source {
                     CursorAccessTokenSource::Environment(name) => name,
-                    CursorAccessTokenSource::MacosKeychain => "macos-keychain",
+                    CursorAccessTokenSource::Keyring => "keyring",
                     CursorAccessTokenSource::Config => "config",
                 },
             );

@@ -1,6 +1,4 @@
 use std::env;
-#[cfg(target_os = "macos")]
-use std::process::Command;
 
 use braindrain_core::{
     AccountIdentity, Provider, ProviderError, ProviderFuture, ProviderId, ProviderSnapshot,
@@ -154,7 +152,7 @@ pub struct CursorAccessToken {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CursorAccessTokenSource {
     Environment(&'static str),
-    MacosKeychain,
+    Keyring,
     Config,
 }
 
@@ -189,14 +187,11 @@ impl CursorProviderConfig {
             });
         }
 
-        #[cfg(target_os = "macos")]
-        {
-            if let Some(token) = macos_keychain_access_token()? {
-                return Ok(CursorAccessToken {
-                    value: token,
-                    source: CursorAccessTokenSource::MacosKeychain,
-                });
-            }
+        if let Some(token) = keyring_access_token()? {
+            return Ok(CursorAccessToken {
+                value: token,
+                source: CursorAccessTokenSource::Keyring,
+            });
         }
 
         Err(CursorProviderError::MissingAccessToken)
@@ -337,7 +332,7 @@ fn cursor_identity(
 pub enum CursorProviderError {
     #[error("Cursor auth token is not configured")]
     MissingAccessToken,
-    #[error("could not read Cursor access token from macOS Keychain: {0}")]
+    #[error("could not read Cursor access token from system keyring: {0}")]
     Keychain(String),
     #[error("could not build Cursor API URL: {0}")]
     Url(url::ParseError),
@@ -375,26 +370,15 @@ impl From<CursorProviderError> for ProviderError {
 #[derive(Debug, Serialize)]
 struct EmptyRequest {}
 
-#[cfg(target_os = "macos")]
-fn macos_keychain_access_token() -> Result<Option<String>, CursorProviderError> {
-    let output = Command::new("security")
-        .args([
-            "find-generic-password",
-            "-w",
-            "-s",
-            CURSOR_KEYCHAIN_SERVICE,
-            "-a",
-            CURSOR_KEYCHAIN_ACCOUNT,
-        ])
-        .output()
+fn keyring_access_token() -> Result<Option<String>, CursorProviderError> {
+    let entry = keyring::Entry::new(CURSOR_KEYCHAIN_SERVICE, CURSOR_KEYCHAIN_ACCOUNT)
         .map_err(|error| CursorProviderError::Keychain(error.to_string()))?;
 
-    if !output.status.success() {
-        return Ok(None);
+    match entry.get_password() {
+        Ok(token) => Ok((!token.is_empty()).then_some(token)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(error) => Err(CursorProviderError::Keychain(error.to_string())),
     }
-
-    let token = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    Ok((!token.is_empty()).then_some(token))
 }
 
 fn deserialize_epoch_millis_option<'de, D>(

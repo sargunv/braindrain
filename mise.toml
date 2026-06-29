@@ -16,12 +16,20 @@ swiftformat = "0.61.1"
 postinstall = ["hk install --mise --quiet", "cargo fetch"]
 
 [tasks.build]
-depends = ["macos-build"]
-run = "cargo build"
+run = '''
+cargo build
+{% if os() == "macos" %}
+mise run macos-build
+{% endif %}
+'''
 
 [tasks.test]
-depends = ["macos-test"]
-run = "cargo test"
+run = '''
+cargo test
+{% if os() == "macos" %}
+mise run macos-test
+{% endif %}
+'''
 
 [tasks.check]
 run = "hk check --all"
@@ -30,7 +38,14 @@ run = "hk check --all"
 run = "hk fix --all"
 
 [tasks.run]
-depends = ["macos-run"]
+run = '''
+{% if os() == "macos" %}
+mise run macos-run
+{% else %}
+echo "BrainDrain's SwiftUI app is macOS-only; use 'mise run cli -- <command>' on {{ os() }}."
+exit 1
+{% endif %}
+'''
 
 [tasks.cli]
 run = "cargo run -p braindrain-cli --"
