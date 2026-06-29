@@ -1,17 +1,20 @@
 [package]
-name = "braindrain-cli"
+name = "braindrain-daemon"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "braindrain"
+name = "braindrain-daemon"
 path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }
-braindrain-daemon = { path = "../daemon" }
+braindrain-core = { path = "../core" }
 braindrain-service = { path = "../service" }
-clap = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
 tokio = { workspace = true }
+zbus = { workspace = true }

@@ -41,6 +41,10 @@ impl CursorProvider {
         self.config.auth_token()
     }
 
+    async fn auth_token_for_refresh(&self) -> Result<CursorAccessToken, CursorProviderError> {
+        self.config.auth_token_async().await
+    }
+
     async fn fetch_current_period_usage(
         &self,
         token: &str,
@@ -124,7 +128,10 @@ impl Provider for CursorProvider {
         context: RefreshContext,
     ) -> ProviderFuture<'a, Result<ProviderSnapshot, ProviderError>> {
         Box::pin(async move {
-            let token = self.auth_token().map_err(ProviderError::from)?;
+            let token = self
+                .auth_token_for_refresh()
+                .await
+                .map_err(ProviderError::from)?;
             let (usage, plan_info, me) = tokio::try_join!(
                 self.fetch_current_period_usage(&token.value),
                 self.fetch_plan_info(&token.value),
@@ -170,8 +177,38 @@ impl CursorProviderConfig {
     }
 
     pub fn auth_token(&self) -> Result<CursorAccessToken, CursorProviderError> {
-        if let Some(token) = self.auth_token.as_deref().filter(|token| !token.is_empty()) {
+        if let Some(token) = self.config_or_env_auth_token() {
+            return Ok(token);
+        }
+
+        if let Some(token) = keyring_access_token_blocking()? {
             return Ok(CursorAccessToken {
+                value: token,
+                source: CursorAccessTokenSource::Keyring,
+            });
+        }
+
+        Err(CursorProviderError::MissingAccessToken)
+    }
+
+    async fn auth_token_async(&self) -> Result<CursorAccessToken, CursorProviderError> {
+        if let Some(token) = self.config_or_env_auth_token() {
+            return Ok(token);
+        }
+
+        if let Some(token) = keyring_access_token_async().await? {
+            return Ok(CursorAccessToken {
+                value: token,
+                source: CursorAccessTokenSource::Keyring,
+            });
+        }
+
+        Err(CursorProviderError::MissingAccessToken)
+    }
+
+    fn config_or_env_auth_token(&self) -> Option<CursorAccessToken> {
+        if let Some(token) = self.auth_token.as_deref().filter(|token| !token.is_empty()) {
+            return Some(CursorAccessToken {
                 value: token.to_owned(),
                 source: CursorAccessTokenSource::Config,
             });
@@ -181,20 +218,13 @@ impl CursorProviderConfig {
             .and_then(|token| token.into_string().ok())
             .filter(|token| !token.is_empty())
         {
-            return Ok(CursorAccessToken {
+            return Some(CursorAccessToken {
                 value: token,
                 source: CursorAccessTokenSource::Environment(CURSOR_AUTH_TOKEN_ENV),
             });
         }
 
-        if let Some(token) = keyring_access_token()? {
-            return Ok(CursorAccessToken {
-                value: token,
-                source: CursorAccessTokenSource::Keyring,
-            });
-        }
-
-        Err(CursorProviderError::MissingAccessToken)
+        None
     }
 }
 
@@ -370,7 +400,13 @@ impl From<CursorProviderError> for ProviderError {
 #[derive(Debug, Serialize)]
 struct EmptyRequest {}
 
-fn keyring_access_token() -> Result<Option<String>, CursorProviderError> {
+async fn keyring_access_token_async() -> Result<Option<String>, CursorProviderError> {
+    tokio::task::spawn_blocking(keyring_access_token_blocking)
+        .await
+        .map_err(|error| CursorProviderError::Keychain(error.to_string()))?
+}
+
+fn keyring_access_token_blocking() -> Result<Option<String>, CursorProviderError> {
     let entry = keyring::Entry::new(CURSOR_KEYCHAIN_SERVICE, CURSOR_KEYCHAIN_ACCOUNT)
         .map_err(|error| CursorProviderError::Keychain(error.to_string()))?;
 

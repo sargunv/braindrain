@@ -50,6 +50,9 @@ exit 1
 [tasks.cli]
 run = "cargo run -p braindrain-cli --"
 
+[tasks.daemon]
+run = "cargo run -p braindrain-daemon"
+
 [tasks.ffi-swift]
 run = [
   "rm -rf crates/bindings-uniffi/.generated",
