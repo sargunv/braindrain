@@ -53,30 +53,10 @@ exit 1
 run = "cargo run -p braindrain-cli --"
 
 [tasks.daemon]
-run = "cargo run -p braindrain-daemon"
+run = "cargo run -p braindrain-cli -- daemon run"
 
 [tasks.plasma-run]
-run = '''
-if command -v plasmoidviewer >/dev/null 2>&1; then
-  plasmoidviewer -a apps/plasma/package
-else
-  kpackagetool6 --type Plasma/Applet --upgrade apps/plasma/package || kpackagetool6 --type Plasma/Applet --install apps/plasma/package
-  plasmawindowed dev.sargunv.braindrain
-fi
-'''
-
-[tasks.plasma-run-panel]
-run = '''
-if command -v plasmoidviewer >/dev/null 2>&1; then
-  plasmoidviewer -a apps/plasma/package -l topedge -f horizontal
-else
-  echo "plasmoidviewer is required for panel-form-factor testing."
-  exit 1
-fi
-'''
-
-[tasks.plasma-install]
-run = "kpackagetool6 --type Plasma/Applet --install apps/plasma/package"
+run = 'plasmoidviewer -a apps/plasma/package -l topedge -f horizontal'
 
 [tasks.ffi-swift]
 run = [

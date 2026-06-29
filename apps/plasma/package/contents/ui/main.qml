@@ -21,15 +21,36 @@ PlasmoidItem {
   property date lastRefresh
   property bool hasLastRefresh: false
 
-  preferredRepresentation: fullRepresentation
-  Plasmoid.icon: "applications-science"
+  switchWidth: Plasmoid.formFactor === PlasmaCore.Types.Horizontal ? 1 : Kirigami.Units.gridUnit * 22
+  switchHeight: Plasmoid.formFactor === PlasmaCore.Types.Vertical ? 1 : Kirigami.Units.gridUnit * 19
+  Plasmoid.icon: "speedometer-symbolic"
   Plasmoid.title: "BrainDrain"
   Plasmoid.status: daemonError.length > 0 ? PlasmaCore.Types.NeedsAttentionStatus : PlasmaCore.Types.ActiveStatus
 
   compactRepresentation: Kirigami.Icon {
+    Layout.minimumWidth: {
+      switch (Plasmoid.formFactor) {
+      case PlasmaCore.Types.Vertical:
+        return 0;
+      case PlasmaCore.Types.Horizontal:
+        return height;
+      default:
+        return Kirigami.Units.gridUnit * 3;
+      }
+    }
+
+    Layout.minimumHeight: {
+      switch (Plasmoid.formFactor) {
+      case PlasmaCore.Types.Vertical:
+        return width;
+      case PlasmaCore.Types.Horizontal:
+        return 0;
+      default:
+        return Kirigami.Units.gridUnit * 3;
+      }
+    }
+
     source: Plasmoid.icon
-    implicitWidth: Kirigami.Units.iconSizes.smallMedium
-    implicitHeight: Kirigami.Units.iconSizes.smallMedium
     active: compactMouseArea.containsMouse
 
     PlasmaComponents3.BusyIndicator {
@@ -56,39 +77,6 @@ PlasmoidItem {
       id: popupLayout
       anchors.fill: parent
       spacing: 0
-
-      RowLayout {
-        Layout.fillWidth: true
-        Layout.margins: Kirigami.Units.smallSpacing * 2
-        spacing: Kirigami.Units.smallSpacing
-
-        PlasmaComponents3.Label {
-          text: "BrainDrain"
-          font.weight: Font.DemiBold
-          Layout.fillWidth: true
-        }
-
-        PlasmaComponents3.BusyIndicator {
-          Layout.preferredWidth: Kirigami.Units.iconSizes.small
-          Layout.preferredHeight: Kirigami.Units.iconSizes.small
-          running: root.isRefreshing
-          visible: running
-        }
-
-        PlasmaComponents3.ToolButton {
-          icon.name: "view-refresh-symbolic"
-          text: "Refresh"
-          display: QtControls.AbstractButton.IconOnly
-          enabled: !root.isRefreshing
-          onClicked: root.refreshAll()
-          QtControls.ToolTip.text: "Refresh"
-          QtControls.ToolTip.visible: hovered
-        }
-      }
-
-      Kirigami.Separator {
-        Layout.fillWidth: true
-      }
 
       RowLayout {
         Layout.fillWidth: true
@@ -311,6 +299,23 @@ PlasmoidItem {
           Layout.fillWidth: true
           elide: Text.ElideRight
           font.pointSize: Kirigami.Theme.smallFont.pointSize
+        }
+
+        PlasmaComponents3.BusyIndicator {
+          Layout.preferredWidth: Kirigami.Units.iconSizes.small
+          Layout.preferredHeight: Kirigami.Units.iconSizes.small
+          running: root.isRefreshing
+          visible: running
+        }
+
+        PlasmaComponents3.ToolButton {
+          icon.name: "view-refresh-symbolic"
+          text: "Refresh"
+          display: QtControls.AbstractButton.IconOnly
+          enabled: !root.isRefreshing
+          onClicked: root.refreshAll()
+          QtControls.ToolTip.text: "Refresh"
+          QtControls.ToolTip.visible: hovered
         }
       }
     }

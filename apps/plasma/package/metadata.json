@@ -4,11 +4,14 @@
     "Authors": [{ "Name": "Sargun Vohra" }],
     "Category": "Utilities",
     "Description": "Track AI provider quota usage from the BrainDrain daemon.",
-    "Icon": "applications-science",
+    "EnabledByDefault": true,
+    "Icon": "speedometer-symbolic",
     "Id": "dev.sargunv.braindrain",
     "License": "MIT",
     "Name": "BrainDrain",
     "Version": "0.1.0"
   },
-  "X-Plasma-API-Minimum-Version": "6.0"
+  "X-Plasma-API-Minimum-Version": "6.0",
+  "X-Plasma-NotificationArea": "true",
+  "X-Plasma-NotificationAreaCategory": "SystemServices"
 }

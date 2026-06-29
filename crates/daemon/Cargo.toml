@@ -4,10 +4,6 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[[bin]]
-name = "braindrain-daemon"
-path = "src/main.rs"
-
 [dependencies]
 anyhow = { workspace = true }
 braindrain-core = { path = "../core" }

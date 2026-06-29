@@ -392,6 +392,7 @@ dependencies = [
  "braindrain-service",
  "clap",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 

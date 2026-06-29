@@ -14,4 +14,5 @@ braindrain-daemon = { path = "../daemon" }
 braindrain-service = { path = "../service" }
 clap = { workspace = true }
 serde_json = { workspace = true }
+tempfile = { workspace = true }
 tokio = { workspace = true }
