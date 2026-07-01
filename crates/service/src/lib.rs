@@ -123,6 +123,9 @@ fn info_cursor() -> ProviderInfo {
     let mut info = ProviderInfo::new(ProviderId::cursor());
     info.push("api_base_url", provider.config().api_base_url.to_string());
     info.push("env_token", CURSOR_AUTH_TOKEN_ENV);
+    if let Some(path) = provider.config().cursor_auth_path() {
+        info.push("auth_path", path.display().to_string());
+    }
     info.push("keyring_service", CURSOR_KEYCHAIN_SERVICE);
     info.push("keyring_account", CURSOR_KEYCHAIN_ACCOUNT);
 
@@ -135,6 +138,7 @@ fn info_cursor() -> ProviderInfo {
                     CursorAccessTokenSource::Environment(name) => name,
                     CursorAccessTokenSource::Keyring => "keyring",
                     CursorAccessTokenSource::Config => "config",
+                    CursorAccessTokenSource::ConfigFile => "config_file",
                 },
             );
         }

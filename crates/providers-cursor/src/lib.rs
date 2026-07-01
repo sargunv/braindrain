@@ -1,4 +1,6 @@
 use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use braindrain_core::{
     AccountIdentity, Provider, ProviderError, ProviderFuture, ProviderId, ProviderSnapshot,
@@ -18,6 +20,7 @@ pub const CURSOR_GET_ME_METHOD: &str = "aiserver.v1.DashboardService/GetMe";
 pub const CURSOR_AUTH_TOKEN_ENV: &str = "CURSOR_AUTH_TOKEN";
 pub const CURSOR_KEYCHAIN_SERVICE: &str = "cursor-access-token";
 pub const CURSOR_KEYCHAIN_ACCOUNT: &str = "cursor-user";
+pub const CURSOR_AUTH_FILENAME: &str = "cursor/auth.json";
 
 #[derive(Debug, Clone)]
 pub struct CursorProvider {
@@ -161,12 +164,14 @@ pub enum CursorAccessTokenSource {
     Environment(&'static str),
     Keyring,
     Config,
+    ConfigFile,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CursorProviderConfig {
     pub auth_token: Option<String>,
     pub api_base_url: Url,
+    pub cursor_auth_path: Option<PathBuf>,
 }
 
 impl CursorProviderConfig {
@@ -176,8 +181,14 @@ impl CursorProviderConfig {
             .map_err(CursorProviderError::Url)
     }
 
+    pub fn cursor_auth_path(&self) -> Option<PathBuf> {
+        self.cursor_auth_path
+            .clone()
+            .or_else(cursor_auth_path_discovered)
+    }
+
     pub fn auth_token(&self) -> Result<CursorAccessToken, CursorProviderError> {
-        if let Some(token) = self.config_or_env_auth_token() {
+        if let Some(token) = self.resolved_auth_token() {
             return Ok(token);
         }
 
@@ -192,7 +203,7 @@ impl CursorProviderConfig {
     }
 
     async fn auth_token_async(&self) -> Result<CursorAccessToken, CursorProviderError> {
-        if let Some(token) = self.config_or_env_auth_token() {
+        if let Some(token) = self.resolved_auth_token() {
             return Ok(token);
         }
 
@@ -206,12 +217,16 @@ impl CursorProviderConfig {
         Err(CursorProviderError::MissingAccessToken)
     }
 
-    fn config_or_env_auth_token(&self) -> Option<CursorAccessToken> {
+    fn resolved_auth_token(&self) -> Option<CursorAccessToken> {
         if let Some(token) = self.auth_token.as_deref().filter(|token| !token.is_empty()) {
             return Some(CursorAccessToken {
                 value: token.to_owned(),
                 source: CursorAccessTokenSource::Config,
             });
+        }
+
+        if let Some(token) = self.discovered_file_auth_token() {
+            return Some(token);
         }
 
         if let Some(token) = env::var_os(CURSOR_AUTH_TOKEN_ENV)
@@ -226,6 +241,15 @@ impl CursorProviderConfig {
 
         None
     }
+
+    fn discovered_file_auth_token(&self) -> Option<CursorAccessToken> {
+        let path = self.cursor_auth_path()?;
+        let token = cursor_access_token_in(&path)?;
+        (!token.is_empty()).then_some(CursorAccessToken {
+            value: token,
+            source: CursorAccessTokenSource::ConfigFile,
+        })
+    }
 }
 
 impl Default for CursorProviderConfig {
@@ -233,6 +257,7 @@ impl Default for CursorProviderConfig {
         Self {
             auth_token: None,
             api_base_url: Url::parse(CURSOR_API_BASE_URL).expect("valid Cursor API base URL"),
+            cursor_auth_path: None,
         }
     }
 }
@@ -417,6 +442,31 @@ fn keyring_access_token_blocking() -> Result<Option<String>, CursorProviderError
     }
 }
 
+fn cursor_auth_path_discovered() -> Option<PathBuf> {
+    if let Some(dir) = env::var_os("XDG_CONFIG_HOME").map(PathBuf::from) {
+        return Some(dir.join(CURSOR_AUTH_FILENAME));
+    }
+    let home = env::var_os("HOME")?;
+    Some(
+        PathBuf::from(home)
+            .join(".config")
+            .join(CURSOR_AUTH_FILENAME),
+    )
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CursorAuthFile {
+    #[serde(default)]
+    access_token: Option<String>,
+}
+
+fn cursor_access_token_in(path: &Path) -> Option<String> {
+    let data = fs::read(path).ok()?;
+    let auth: CursorAuthFile = serde_json::from_slice(&data).ok()?;
+    auth.access_token.filter(|token| !token.is_empty())
+}
+
 fn deserialize_epoch_millis_option<'de, D>(
     deserializer: D,
 ) -> Result<Option<OffsetDateTime>, D::Error>
@@ -532,6 +582,7 @@ mod tests {
         let provider = CursorProvider::new(CursorProviderConfig {
             auth_token: Some("test-token".to_owned()),
             api_base_url: Url::parse(&server.uri()).expect("mock URL"),
+            cursor_auth_path: None,
         });
         let snapshot = provider
             .refresh(RefreshContext {
@@ -546,5 +597,74 @@ mod tests {
         let identity = snapshot.identity.expect("Cursor identity");
         assert_eq!(identity.email, Some("sargun@example.com".to_owned()));
         assert_eq!(identity.plan, Some("Pro".to_owned()));
+    }
+
+    #[test]
+    fn config_auth_token_reads_cursor_cli_auth_file() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let auth_path = tempdir.path().join("auth.json");
+        std::fs::write(
+            &auth_path,
+            serde_json::json!({
+                "accessToken": "file-token",
+                "refreshToken": "refresh-token"
+            })
+            .to_string(),
+        )
+        .expect("write auth");
+
+        let config = CursorProviderConfig {
+            cursor_auth_path: Some(auth_path),
+            ..CursorProviderConfig::default()
+        };
+        let token = config.auth_token().expect("auth token");
+        assert_eq!(token.value, "file-token");
+        assert_eq!(token.source, CursorAccessTokenSource::ConfigFile);
+    }
+
+    #[test]
+    fn explicit_config_token_beats_cursor_cli_auth_file() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let auth_path = tempdir.path().join("auth.json");
+        std::fs::write(
+            &auth_path,
+            serde_json::json!({ "accessToken": "file-token" }).to_string(),
+        )
+        .expect("write auth");
+
+        let config = CursorProviderConfig {
+            auth_token: Some("explicit".to_owned()),
+            cursor_auth_path: Some(auth_path),
+            ..CursorProviderConfig::default()
+        };
+        let token = config.auth_token().expect("auth token");
+        assert_eq!(token.value, "explicit");
+        assert_eq!(token.source, CursorAccessTokenSource::Config);
+    }
+
+    #[test]
+    fn cursor_access_token_in_reads_access_token() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let auth_path = tempdir.path().join("auth.json");
+        std::fs::write(
+            &auth_path,
+            serde_json::json!({ "accessToken": "abc", "refreshToken": "def" }).to_string(),
+        )
+        .expect("write auth");
+
+        assert_eq!(cursor_access_token_in(&auth_path).as_deref(), Some("abc"));
+    }
+
+    #[test]
+    fn cursor_access_token_in_ignores_missing_access_token_field() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let auth_path = tempdir.path().join("auth.json");
+        std::fs::write(
+            &auth_path,
+            serde_json::json!({ "refreshToken": "refresh-token" }).to_string(),
+        )
+        .expect("write auth");
+
+        assert_eq!(cursor_access_token_in(&auth_path), None);
     }
 }

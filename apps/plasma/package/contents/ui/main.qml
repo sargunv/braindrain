@@ -326,6 +326,33 @@ PlasmoidItem {
     loadStatus();
   }
 
+  DBus.SignalWatcher {
+    service: root.busName
+    path: root.objectPath
+    iface: root.interfaceName
+
+    function dbusSnapshotChanged(provider, stateJson) {
+      root.applyStateJson(provider, stateJson)
+    }
+
+    function dbusProviderRefreshStarted(provider) {
+      root.isRefreshing = true
+      refreshClearTimer.stop()
+    }
+
+    function dbusProviderRefreshFinished(provider, stateJson) {
+      root.applyStateJson(provider, stateJson)
+      refreshClearTimer.restart()
+    }
+  }
+
+  Timer {
+    id: refreshClearTimer
+    interval: 800
+    repeat: false
+    onTriggered: root.isRefreshing = false
+  }
+
   function callDaemon(method, args, onSuccess) {
     if (!DBus.SessionBus) {
       daemonError = "BrainDrain daemon D-Bus module is unavailable";
@@ -433,6 +460,34 @@ PlasmoidItem {
       lastRefresh = new Date();
       hasLastRefresh = true;
     });
+  }
+
+  function applyStateJson(provider, stateJson) {
+    let state = null
+    try {
+      state = JSON.parse(stateJson)
+    } catch (error) {
+      return
+    }
+    if (!state || typeof state !== "object" || !provider) {
+      return
+    }
+    state.provider = provider
+    const next = {}
+    const keys = Object.keys(providerStates)
+    for (let i = 0; i < keys.length; i += 1) {
+      next[keys[i]] = providerStates[keys[i]]
+    }
+    next[provider] = state
+    providerStates = next
+    if (providerOrder.indexOf(provider) < 0) {
+      providerOrder = providerOrder.concat([provider])
+    }
+    if (!selectedProviderId) {
+      selectedProviderId = provider
+    }
+    lastRefresh = new Date()
+    hasLastRefresh = true
   }
 
   function applyStates(states) {
