@@ -547,6 +547,9 @@ PlasmoidItem {
     if (provider === "zai") {
       return "z.ai";
     }
+    if (provider === "opencode-go") {
+      return "OpenCode Go";
+    }
     return provider || "";
   }
 

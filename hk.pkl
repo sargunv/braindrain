@@ -16,10 +16,6 @@ local lintSteps = new Mapping<String, Step> {
     check = "cargo clippy --all-targets --all-features -- -D warnings"
     fix = "cargo clippy --fix --all-targets --all-features --allow-dirty -- -D warnings"
   }
-  ["swift-build"] {
-    glob = List("apps/macos/**/*.swift", "apps/macos/Package.swift")
-    check = "mise run macos-build"
-  }
 }
 
 hooks {

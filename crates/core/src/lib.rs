@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -18,6 +19,7 @@ impl ProviderId {
     pub const OPENAI: &'static str = "openai";
     pub const CURSOR: &'static str = "cursor";
     pub const ZAI: &'static str = "zai";
+    pub const OPENCODE_GO: &'static str = "opencode-go";
 
     pub fn new(id: impl Into<String>) -> Self {
         Self(id.into())
@@ -33,6 +35,10 @@ impl ProviderId {
 
     pub fn zai() -> Self {
         Self::new(Self::ZAI)
+    }
+
+    pub fn opencode_go() -> Self {
+        Self::new(Self::OPENCODE_GO)
     }
 
     pub fn as_str(&self) -> &str {
@@ -116,10 +122,29 @@ pub struct ResetCreditSnapshot {
     pub expires_at: Option<OffsetDateTime>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AccountIdentity {
     pub email: Option<String>,
     pub plan: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderCredentialField {
+    pub id: String,
+    pub label: String,
+    pub secret: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderCredentialSchema {
+    pub provider: ProviderId,
+    pub fields: Vec<ProviderCredentialField>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderCredentials {
+    pub provider: ProviderId,
+    pub values: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]

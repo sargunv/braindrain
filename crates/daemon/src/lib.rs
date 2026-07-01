@@ -500,6 +500,7 @@ fn provider_error_from_service(error: service::ServiceError) -> ProviderError {
         service::ServiceError::UnsupportedProvider { provider } => ProviderError::Unsupported(
             service::ServiceError::UnsupportedProvider { provider }.to_string(),
         ),
+        service::ServiceError::Credential(message) => ProviderError::Unsupported(message),
     }
 }
 

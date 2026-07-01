@@ -1,10 +1,13 @@
+use std::collections::HashMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
 use anyhow::{Context, bail};
+use braindrain_core::ProviderCredentials;
 use braindrain_daemon::{BUS_NAME, DaemonClient};
 use braindrain_service as service;
 use clap::{Parser, Subcommand};
@@ -56,6 +59,11 @@ enum Command {
     Desktop {
         #[command(subcommand)]
         command: DesktopCommand,
+    },
+    /// Manage stored provider credentials.
+    Auth {
+        #[command(subcommand)]
+        command: AuthCommand,
     },
 }
 
@@ -111,15 +119,35 @@ enum DesktopTarget {
     Plasma,
 }
 
+#[derive(Debug, Subcommand)]
+enum AuthCommand {
+    /// Store credentials for a provider in the system keyring.
+    Login {
+        /// Provider id, for example opencode-go. The alias opencode maps to opencode-go.
+        provider: String,
+    },
+    /// Remove stored credentials for a provider.
+    Logout {
+        /// Provider id, for example opencode-go. The alias opencode maps to opencode-go.
+        provider: String,
+    },
+    /// Print the credential fields a provider accepts.
+    Schema {
+        /// Provider id, for example opencode-go. The alias opencode maps to opencode-go.
+        provider: String,
+    },
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Providers => list_providers(),
-        Command::Info { provider } => info_provider(&provider),
+        Command::Info { provider } => info_provider(&provider).await,
         Command::Check { provider } => check_provider(&provider).await,
         Command::Daemon { command } => daemon_command(command).await,
         Command::Desktop { command } => desktop_command(command),
+        Command::Auth { command } => auth_command(command).await,
     }
 }
 
@@ -130,8 +158,10 @@ fn list_providers() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn info_provider(provider: &str) -> anyhow::Result<()> {
-    let info = service::info_provider(provider).context("failed to inspect provider")?;
+async fn info_provider(provider: &str) -> anyhow::Result<()> {
+    let info = service::info_provider(provider)
+        .await
+        .context("failed to inspect provider")?;
     println!("provider={}", info.provider.as_str());
     for field in info.fields {
         println!("{}={}", field.key, field.value);
@@ -197,6 +227,63 @@ fn desktop_command(command: DesktopCommand) -> anyhow::Result<()> {
             target: DesktopTarget::Plasma,
         } => plasma_uninstall(),
     }
+}
+
+async fn auth_command(command: AuthCommand) -> anyhow::Result<()> {
+    match command {
+        AuthCommand::Login { provider } => auth_login(&provider).await,
+        AuthCommand::Logout { provider } => {
+            let canonical = service::normalize_provider_id(&provider);
+            service::delete_credentials(&provider)
+                .await
+                .context("failed to remove credentials")?;
+            println!("removed credentials for {}", canonical.as_str());
+            Ok(())
+        }
+        AuthCommand::Schema { provider } => auth_schema(&provider),
+    }
+}
+
+async fn auth_login(provider: &str) -> anyhow::Result<()> {
+    let schema = service::credential_schema(provider)
+        .with_context(|| format!("provider '{provider}' does not support stored credentials"))?;
+
+    let mut values: HashMap<String, String> = HashMap::new();
+    for field in &schema.fields {
+        let value = if field.secret {
+            rpassword::prompt_password(format!("{}: ", field.label))?
+        } else {
+            print!("{}: ", field.label);
+            io::stdout().flush()?;
+            let mut line = String::new();
+            io::stdin().read_line(&mut line)?;
+            line.trim().to_owned()
+        };
+        if value.is_empty() {
+            bail!("{} is required", field.label);
+        }
+        values.insert(field.id.clone(), value);
+    }
+
+    let credentials = ProviderCredentials {
+        provider: schema.provider.clone(),
+        values,
+    };
+    service::store_credentials(credentials)
+        .await
+        .context("failed to store credentials")?;
+    println!("stored credentials for {}", schema.provider.as_str());
+    Ok(())
+}
+
+fn auth_schema(provider: &str) -> anyhow::Result<()> {
+    let schema = service::credential_schema(provider)
+        .with_context(|| format!("provider '{provider}' does not support stored credentials"))?;
+    println!("provider={}", schema.provider.as_str());
+    for field in schema.fields {
+        println!("{}\t{}\t{}", field.id, field.label, field.secret);
+    }
+    Ok(())
 }
 
 fn print_json(data: &str) -> anyhow::Result<()> {

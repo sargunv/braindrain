@@ -1,7 +1,14 @@
-use braindrain_core::{Provider, ProviderError, ProviderId, ProviderSnapshot, RefreshContext};
+use braindrain_core::{
+    Provider, ProviderCredentialSchema, ProviderCredentials, ProviderError, ProviderId,
+    ProviderSnapshot, RefreshContext,
+};
 use braindrain_providers_cursor::{CURSOR_AUTH_TOKEN_ENV, CursorAccessTokenSource, CursorProvider};
 use braindrain_providers_cursor::{CURSOR_KEYCHAIN_ACCOUNT, CURSOR_KEYCHAIN_SERVICE};
 use braindrain_providers_openai::OpenAiProvider;
+use braindrain_providers_opencode_go::{
+    OPENCODE_AUTH_COOKIE_ENV, OPENCODE_KEYCHAIN_ACCOUNT, OPENCODE_KEYCHAIN_SERVICE,
+    OPENCODE_WORKSPACE_ID_ENV, OpenCodeGoCredentialsSource, OpenCodeGoProvider,
+};
 use braindrain_providers_zai::{ZAI_API_KEY_ENV, ZaiApiKeySource, ZaiProvider};
 
 #[derive(Debug, thiserror::Error)]
@@ -10,6 +17,8 @@ pub enum ServiceError {
     UnsupportedProvider { provider: String },
     #[error("provider error: {0}")]
     Provider(#[from] ProviderError),
+    #[error("credential error: {0}")]
+    Credential(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +38,7 @@ pub fn provider_ids() -> Vec<ProviderId> {
         ProviderId::openai(),
         ProviderId::cursor(),
         ProviderId::zai(),
+        ProviderId::opencode_go(),
     ]
 }
 
@@ -36,15 +46,17 @@ pub fn normalize_provider_id(provider: &str) -> ProviderId {
     match provider {
         "codex" => ProviderId::openai(),
         "z.ai" => ProviderId::zai(),
+        "opencode" | "zen-go" | "opencode-zen" => ProviderId::opencode_go(),
         provider => ProviderId::new(provider),
     }
 }
 
-pub fn info_provider(provider: &str) -> Result<ProviderInfo, ServiceError> {
+pub async fn info_provider(provider: &str) -> Result<ProviderInfo, ServiceError> {
     match normalize_provider_id(provider).as_str() {
         ProviderId::OPENAI => Ok(info_openai()),
         ProviderId::CURSOR => Ok(info_cursor()),
         ProviderId::ZAI => Ok(info_zai()),
+        ProviderId::OPENCODE_GO => Ok(info_opencode_go().await),
         provider => Err(ServiceError::UnsupportedProvider {
             provider: provider.to_owned(),
         }),
@@ -66,6 +78,39 @@ pub async fn check_provider(provider: &str) -> Result<ProviderSnapshot, ServiceE
             .refresh(context)
             .await
             .map_err(ServiceError::from),
+        ProviderId::OPENCODE_GO => OpenCodeGoProvider::default()
+            .refresh(context)
+            .await
+            .map_err(ServiceError::from),
+        provider => Err(ServiceError::UnsupportedProvider {
+            provider: provider.to_owned(),
+        }),
+    }
+}
+
+pub fn credential_schema(provider: &str) -> Option<ProviderCredentialSchema> {
+    match normalize_provider_id(provider).as_str() {
+        ProviderId::OPENCODE_GO => Some(OpenCodeGoProvider::credential_schema()),
+        _ => None,
+    }
+}
+
+pub async fn store_credentials(credentials: ProviderCredentials) -> Result<(), ServiceError> {
+    match credentials.provider.as_str() {
+        ProviderId::OPENCODE_GO => OpenCodeGoProvider::store_credentials(credentials)
+            .await
+            .map_err(|error| ServiceError::Credential(error.to_string())),
+        provider => Err(ServiceError::UnsupportedProvider {
+            provider: provider.to_owned(),
+        }),
+    }
+}
+
+pub async fn delete_credentials(provider: &str) -> Result<(), ServiceError> {
+    match normalize_provider_id(provider).as_str() {
+        ProviderId::OPENCODE_GO => OpenCodeGoProvider::delete_credentials()
+            .await
+            .map_err(|error| ServiceError::Credential(error.to_string())),
         provider => Err(ServiceError::UnsupportedProvider {
             provider: provider.to_owned(),
         }),
@@ -184,6 +229,39 @@ fn info_zai() -> ProviderInfo {
     info
 }
 
+async fn info_opencode_go() -> ProviderInfo {
+    let provider = OpenCodeGoProvider::default();
+    let mut info = ProviderInfo::new(ProviderId::opencode_go());
+    info.push(
+        "workspace_page",
+        provider.config().base_url.as_str().to_owned(),
+    );
+    info.push("env_workspace_id", OPENCODE_WORKSPACE_ID_ENV);
+    info.push("env_auth_cookie", OPENCODE_AUTH_COOKIE_ENV);
+    info.push("keyring_service", OPENCODE_KEYCHAIN_SERVICE);
+    info.push("keyring_account", OPENCODE_KEYCHAIN_ACCOUNT);
+
+    match provider.credentials_async().await {
+        Ok(credentials) => {
+            info.push("auth_found", "true");
+            info.push(
+                "auth_source",
+                match credentials.source {
+                    OpenCodeGoCredentialsSource::Config => "config",
+                    OpenCodeGoCredentialsSource::Environment => "environment",
+                    OpenCodeGoCredentialsSource::Keyring => "keyring",
+                },
+            );
+        }
+        Err(error) => {
+            info.push("auth_found", "false");
+            info.push("auth_error", error.to_string());
+        }
+    }
+
+    info
+}
+
 impl ProviderInfo {
     fn new(provider: ProviderId) -> Self {
         Self {
@@ -210,6 +288,14 @@ mod tests {
         assert_eq!(normalize_provider_id("cursor").as_str(), ProviderId::CURSOR);
         assert_eq!(normalize_provider_id("z.ai").as_str(), ProviderId::ZAI);
         assert_eq!(normalize_provider_id("zai").as_str(), ProviderId::ZAI);
+        assert_eq!(
+            normalize_provider_id("opencode").as_str(),
+            ProviderId::OPENCODE_GO
+        );
+        assert_eq!(
+            normalize_provider_id("opencode-go").as_str(),
+            ProviderId::OPENCODE_GO
+        );
     }
 
     #[test]
@@ -219,7 +305,8 @@ mod tests {
             vec![
                 ProviderId::openai(),
                 ProviderId::cursor(),
-                ProviderId::zai()
+                ProviderId::zai(),
+                ProviderId::opencode_go()
             ]
         );
     }

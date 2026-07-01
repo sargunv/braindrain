@@ -119,6 +119,8 @@ struct ProviderViewState: Identifiable {
             "Cursor"
         case "zai":
             "z.ai"
+        case "opencode-go":
+            "OpenCode Go"
         default:
             id
         }

@@ -10,9 +10,11 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+braindrain-core = { path = "../core" }
 braindrain-daemon = { path = "../daemon" }
 braindrain-service = { path = "../service" }
 clap = { workspace = true }
+rpassword = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
