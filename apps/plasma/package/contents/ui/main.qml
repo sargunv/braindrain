@@ -331,10 +331,6 @@ PlasmoidItem {
     path: root.objectPath
     iface: root.interfaceName
 
-    function dbusSnapshotChanged(provider, stateJson) {
-      root.applyStateJson(provider, stateJson)
-    }
-
     function dbusProviderRefreshStarted(provider) {
       root.isRefreshing = true
       refreshClearTimer.stop()
@@ -480,12 +476,6 @@ PlasmoidItem {
     }
     next[provider] = state
     providerStates = next
-    if (providerOrder.indexOf(provider) < 0) {
-      providerOrder = providerOrder.concat([provider])
-    }
-    if (!selectedProviderId) {
-      selectedProviderId = provider
-    }
     lastRefresh = new Date()
     hasLastRefresh = true
   }
