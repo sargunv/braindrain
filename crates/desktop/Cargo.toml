@@ -1,0 +1,10 @@
+[package]
+name = "braindrain-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+braindrain-daemon = { path = "../daemon" }
+tempfile = { workspace = true }

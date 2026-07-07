@@ -42,7 +42,7 @@ run = '''
 {% if os() == "macos" %}
 mise run macos-run
 {% elif os() == "linux" %}
-mise run plasma-run
+mise run linux-run
 {% else %}
 echo "BrainDrain does not have a desktop app task for {{ os() }}; use 'mise run cli -- <command>'."
 exit 1
@@ -54,6 +54,12 @@ run = "cargo run -p braindrain-cli --"
 
 [tasks.daemon]
 run = "cargo run -p braindrain-cli -- daemon run"
+
+[tasks.linux-build]
+run = "cargo build -p braindrain-gui"
+
+[tasks.linux-run]
+run = "cargo run -p braindrain-gui"
 
 [tasks.plasma-run]
 run = 'plasmoidviewer -a apps/plasma/package -l topedge -f horizontal'

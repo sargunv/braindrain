@@ -1,32 +1,17 @@
 use std::collections::HashMap;
-use std::env;
-use std::ffi::{OsStr, OsString};
-use std::fs;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-use std::process::Command as ProcessCommand;
 
 use anyhow::{Context, bail};
 use braindrain_core::ProviderCredentials;
-use braindrain_daemon::{BUS_NAME, DaemonClient};
+use braindrain_daemon::DaemonClient;
 use braindrain_service as service;
 use clap::{Parser, Subcommand};
 
+#[cfg(target_os = "linux")]
+use braindrain_desktop as desktop;
+
 const DAEMON_HINT: &str =
     "failed to reach BrainDrain daemon; start it with `braindrain daemon run`";
-const DAEMON_SERVICE_NAME: &str = "braindrain-daemon.service";
-const DBUS_SERVICE_FILE_NAME: &str = "dev.sargunv.BrainDrain1.service";
-const PLASMOID_ID: &str = "dev.sargunv.braindrain";
-const PLASMOID_FILES: &[(&str, &str)] = &[
-    (
-        "metadata.json",
-        include_str!("../../../apps/plasma/package/metadata.json"),
-    ),
-    (
-        "contents/ui/main.qml",
-        include_str!("../../../apps/plasma/package/contents/ui/main.qml"),
-    ),
-];
 
 #[derive(Debug, Parser)]
 #[command(name = "braindrain")]
@@ -117,6 +102,8 @@ enum DesktopCommand {
 enum DesktopTarget {
     /// KDE Plasma widget.
     Plasma,
+    /// Linux GUI app launcher (.desktop entry + icon).
+    Linux,
 }
 
 #[derive(Debug, Subcommand)]
@@ -180,11 +167,46 @@ async fn check_provider(provider: &str) -> anyhow::Result<()> {
 async fn daemon_command(command: DaemonCommand) -> anyhow::Result<()> {
     match command {
         DaemonCommand::Run => braindrain_daemon::run_service().await,
-        DaemonCommand::Install => daemon_install(),
-        DaemonCommand::Uninstall => daemon_uninstall(),
-        DaemonCommand::Start => systemctl_user(["start", DAEMON_SERVICE_NAME]),
-        DaemonCommand::Stop => systemctl_user(["stop", DAEMON_SERVICE_NAME]),
-        DaemonCommand::Restart => systemctl_user(["restart", DAEMON_SERVICE_NAME]),
+        DaemonCommand::Install => {
+            ensure_linux("daemon install")?;
+            #[cfg(target_os = "linux")]
+            {
+                desktop::daemon::install()?;
+            }
+            Ok(())
+        }
+        DaemonCommand::Uninstall => {
+            ensure_linux("daemon uninstall")?;
+            #[cfg(target_os = "linux")]
+            {
+                desktop::daemon::uninstall()?;
+            }
+            Ok(())
+        }
+        DaemonCommand::Start => {
+            ensure_linux("daemon start")?;
+            #[cfg(target_os = "linux")]
+            {
+                desktop::daemon::start()?;
+            }
+            Ok(())
+        }
+        DaemonCommand::Stop => {
+            ensure_linux("daemon stop")?;
+            #[cfg(target_os = "linux")]
+            {
+                desktop::daemon::stop()?;
+            }
+            Ok(())
+        }
+        DaemonCommand::Restart => {
+            ensure_linux("daemon restart")?;
+            #[cfg(target_os = "linux")]
+            {
+                desktop::daemon::restart()?;
+            }
+            Ok(())
+        }
         command => daemon_client_command(command).await,
     }
 }
@@ -219,13 +241,27 @@ async fn daemon_client_command(command: DaemonCommand) -> anyhow::Result<()> {
 }
 
 fn desktop_command(command: DesktopCommand) -> anyhow::Result<()> {
-    match command {
-        DesktopCommand::Install {
-            target: DesktopTarget::Plasma,
-        } => plasma_install(),
-        DesktopCommand::Uninstall {
-            target: DesktopTarget::Plasma,
-        } => plasma_uninstall(),
+    #[cfg(target_os = "linux")]
+    {
+        match command {
+            DesktopCommand::Install {
+                target: DesktopTarget::Plasma,
+            } => desktop::plasma::install(),
+            DesktopCommand::Uninstall {
+                target: DesktopTarget::Plasma,
+            } => desktop::plasma::uninstall(),
+            DesktopCommand::Install {
+                target: DesktopTarget::Linux,
+            } => desktop::linux::install(),
+            DesktopCommand::Uninstall {
+                target: DesktopTarget::Linux,
+            } => desktop::linux::uninstall(),
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = command;
+        bail!("desktop integration is only supported on Linux");
     }
 }
 
@@ -292,223 +328,6 @@ fn print_json(data: &str) -> anyhow::Result<()> {
         Err(_) => println!("{data}"),
     }
     Ok(())
-}
-
-fn daemon_install() -> anyhow::Result<()> {
-    ensure_linux("daemon install")?;
-
-    let exe = env::current_exe().context("failed to locate current braindrain executable")?;
-    let service_path = daemon_service_path()?;
-    let dbus_path = dbus_service_path()?;
-
-    write_file(
-        &service_path,
-        &systemd_service_contents(&exe),
-        "systemd user service",
-    )?;
-    write_file(&dbus_path, &dbus_service_contents(&exe), "D-Bus service")?;
-
-    systemctl_user(["daemon-reload"])?;
-    systemctl_user(["enable", "--now", DAEMON_SERVICE_NAME])?;
-
-    println!("installed {}", service_path.display());
-    println!("installed {}", dbus_path.display());
-    Ok(())
-}
-
-fn daemon_uninstall() -> anyhow::Result<()> {
-    ensure_linux("daemon uninstall")?;
-
-    let service_path = daemon_service_path()?;
-    let dbus_path = dbus_service_path()?;
-
-    let _ = systemctl_user(["disable", "--now", DAEMON_SERVICE_NAME]);
-    remove_file_if_exists(&service_path)?;
-    remove_file_if_exists(&dbus_path)?;
-    systemctl_user(["daemon-reload"])?;
-
-    println!("removed {}", service_path.display());
-    println!("removed {}", dbus_path.display());
-    Ok(())
-}
-
-fn plasma_install() -> anyhow::Result<()> {
-    ensure_linux("plasma install")?;
-
-    let temp_dir = tempfile::tempdir().context("failed to create temporary Plasma package")?;
-    let package_path = temp_dir.path().join("package");
-    write_embedded_plasmoid(&package_path)?;
-
-    let upgrade = run_process(
-        "kpackagetool6",
-        [
-            OsStr::new("--type"),
-            OsStr::new("Plasma/Applet"),
-            OsStr::new("--upgrade"),
-            package_path.as_os_str(),
-        ],
-    );
-
-    match upgrade {
-        Ok(()) => {
-            println!("upgraded Plasma widget {PLASMOID_ID}");
-            Ok(())
-        }
-        Err(_) => {
-            run_process(
-                "kpackagetool6",
-                [
-                    OsStr::new("--type"),
-                    OsStr::new("Plasma/Applet"),
-                    OsStr::new("--install"),
-                    package_path.as_os_str(),
-                ],
-            )?;
-            println!("installed Plasma widget {PLASMOID_ID}");
-            Ok(())
-        }
-    }
-}
-
-fn plasma_uninstall() -> anyhow::Result<()> {
-    ensure_linux("plasma uninstall")?;
-    run_process(
-        "kpackagetool6",
-        [
-            OsStr::new("--type"),
-            OsStr::new("Plasma/Applet"),
-            OsStr::new("--remove"),
-            OsStr::new(PLASMOID_ID),
-        ],
-    )?;
-    println!("removed Plasma widget {PLASMOID_ID}");
-    Ok(())
-}
-
-fn write_embedded_plasmoid(package_path: &Path) -> anyhow::Result<()> {
-    for (relative_path, contents) in PLASMOID_FILES {
-        let path = package_path.join(relative_path);
-        write_file(&path, contents, "embedded Plasma package file")?;
-    }
-    Ok(())
-}
-
-fn systemd_service_contents(exe: &Path) -> String {
-    format!(
-        "\
-[Unit]
-Description=BrainDrain D-Bus daemon
-
-[Service]
-Type=dbus
-BusName={BUS_NAME}
-ExecStart={} daemon run
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=default.target
-",
-        quoted_path(exe),
-    )
-}
-
-fn dbus_service_contents(exe: &Path) -> String {
-    format!(
-        "\
-[D-BUS Service]
-Name={BUS_NAME}
-Exec={} daemon run
-SystemdService={DAEMON_SERVICE_NAME}
-",
-        quoted_path(exe),
-    )
-}
-
-fn daemon_service_path() -> anyhow::Result<PathBuf> {
-    Ok(xdg_config_home()?
-        .join("systemd/user")
-        .join(DAEMON_SERVICE_NAME))
-}
-
-fn dbus_service_path() -> anyhow::Result<PathBuf> {
-    Ok(xdg_data_home()?
-        .join("dbus-1/services")
-        .join(DBUS_SERVICE_FILE_NAME))
-}
-
-fn xdg_config_home() -> anyhow::Result<PathBuf> {
-    Ok(env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or(home_dir()?.join(".config")))
-}
-
-fn xdg_data_home() -> anyhow::Result<PathBuf> {
-    Ok(env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .unwrap_or(home_dir()?.join(".local/share")))
-}
-
-fn home_dir() -> anyhow::Result<PathBuf> {
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .context("HOME is not set")
-}
-
-fn write_file(path: &Path, contents: &str, description: &str) -> anyhow::Result<()> {
-    let parent = path
-        .parent()
-        .with_context(|| format!("failed to find parent directory for {}", path.display()))?;
-    fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
-    fs::write(path, contents)
-        .with_context(|| format!("failed to write {description} at {}", path.display()))
-}
-
-fn remove_file_if_exists(path: &Path) -> anyhow::Result<()> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error).with_context(|| format!("failed to remove {}", path.display())),
-    }
-}
-
-fn systemctl_user<I, S>(args: I) -> anyhow::Result<()>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<OsStr>,
-{
-    let mut command_args = vec![OsString::from("--user")];
-    command_args.extend(args.into_iter().map(|arg| arg.as_ref().to_os_string()));
-    run_process("systemctl", command_args)
-}
-
-fn run_process<I, S>(program: &str, args: I) -> anyhow::Result<()>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<OsStr>,
-{
-    let output = ProcessCommand::new(program)
-        .args(args)
-        .output()
-        .with_context(|| format!("failed to run {program}"))?;
-
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    bail!(
-        "{program} exited with status {}\nstdout:\n{}\nstderr:\n{}",
-        output.status,
-        stdout.trim(),
-        stderr.trim(),
-    )
-}
-
-fn quoted_path(path: &Path) -> String {
-    let path = path.to_string_lossy();
-    format!("\"{}\"", path.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 fn ensure_linux(action: &str) -> anyhow::Result<()> {

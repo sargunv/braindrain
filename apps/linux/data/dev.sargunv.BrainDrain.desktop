@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=BrainDrain
+GenericName=AI Quota Monitor
+Comment=Track AI provider quota usage and manage the BrainDrain daemon
+Exec=braindrain-gui
+Icon=dev.sargunv.BrainDrain
+Terminal=false
+Categories=System;Monitor;Utility;
+Keywords=quota;ai;usage;monitor;
+StartupNotify=true
