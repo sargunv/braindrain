@@ -5,7 +5,6 @@
 //! There is no need for explicit start/stop/restart controls — stopping is
 //! futile (the next call re-activates), and starting is implicit.
 
-use std::env;
 use std::path::{Path, PathBuf};
 
 use super::util::{
@@ -13,29 +12,32 @@ use super::util::{
     remove_file_if_exists, systemctl_user, systemd_service_contents, write_file,
 };
 
-/// Error returned when the `braindrain` CLI binary cannot be located on `PATH`.
-/// Carries enough context for the GUI to surface a useful install-prompt error.
-#[derive(Debug, thiserror::Error)]
-#[error("the `braindrain` CLI binary was not found on PATH; install it first")]
-pub struct DaemonCliNotFound;
-
 /// Install the user systemd + D-Bus activation files.
 ///
-/// `cli_exe` is the absolute path to the `braindrain` CLI binary, which the
-/// unit's `ExecStart` invokes as `<cli_exe> daemon run`. The daemon itself is
-/// not started or enabled here — it activates on demand the first time any
-/// client calls the bus name. Returns the path of the installed systemd user
-/// unit.
-pub fn install(cli_exe: &Path) -> anyhow::Result<PathBuf> {
+/// `cli_exe` is the absolute path to a binary that knows how to run the daemon
+/// (either the `braindrain` CLI, given `cli_args = "daemon run"`, or the GUI
+/// binary, given `cli_args = "--daemon-run"`). `current_exe()` is the right
+/// choice for both callers — the systemd unit's `ExecStart` invokes
+/// `<cli_exe> <cli_args>`, so the binary that handles install is the same one
+/// that gets activated later.
+///
+/// The daemon itself is not started or enabled here — it activates on demand
+/// the first time any client calls the bus name. Returns the path of the
+/// installed systemd user unit.
+pub fn install(cli_exe: &Path, cli_args: &str) -> anyhow::Result<PathBuf> {
     let service_path = daemon_service_path()?;
     let dbus_path = dbus_service_path()?;
 
     write_file(
         &service_path,
-        &systemd_service_contents(cli_exe),
+        &systemd_service_contents(cli_exe, cli_args),
         "systemd user service",
     )?;
-    write_file(&dbus_path, &dbus_service_contents(cli_exe), "D-Bus service")?;
+    write_file(
+        &dbus_path,
+        &dbus_service_contents(cli_exe, cli_args),
+        "D-Bus service",
+    )?;
 
     systemctl_user(["daemon-reload"])?;
 
@@ -65,19 +67,4 @@ pub fn uninstall() -> anyhow::Result<()> {
 /// when true, D-Bus activation will start the daemon on demand.
 pub fn is_installed() -> bool {
     daemon_service_path().map(|p| p.exists()).unwrap_or(false)
-}
-
-/// Locate the `braindrain` CLI binary on `PATH`.
-///
-/// Used by callers that aren't the CLI itself (e.g. the GUI app) to resolve
-/// the executable to advertise in `ExecStart`. The CLI binary can pass its
-/// own `current_exe()` directly to [`install`].
-pub fn find_cli_on_path() -> Result<PathBuf, DaemonCliNotFound> {
-    const CLI_BASENAME: &str = "braindrain";
-
-    let path = env::var_os("PATH").ok_or(DaemonCliNotFound)?;
-    env::split_paths(&path)
-        .map(|dir| dir.join(CLI_BASENAME))
-        .find(|candidate| candidate.is_file())
-        .ok_or(DaemonCliNotFound)
 }

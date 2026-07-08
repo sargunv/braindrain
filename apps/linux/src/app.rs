@@ -214,7 +214,7 @@ impl Component for AppModel {
 
             AppMsg::InstallDaemon => {
                 sender.spawn_oneshot_command(|| {
-                    let cli_exe = match desktop::daemon::find_cli_on_path() {
+                    let exe = match std::env::current_exe() {
                         Ok(p) => p,
                         Err(error) => {
                             log::error!("daemon install failed: {error:?}");
@@ -223,7 +223,7 @@ impl Component for AppModel {
                             };
                         }
                     };
-                    match desktop::daemon::install(&cli_exe).map(|_| ()) {
+                    match desktop::daemon::install(&exe, "--daemon-run").map(|_| ()) {
                         Ok(()) => AppMsg::InstallResult { result: Ok(()) },
                         Err(error) => {
                             log::error!("daemon install failed: {error:?}");

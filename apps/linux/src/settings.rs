@@ -14,16 +14,11 @@ pub static SETTINGS_BROKER: MessageBroker<SettingsMsg> = MessageBroker::new();
 pub enum SettingsMsg {
     Show,
     RefreshState,
-    DaemonInstall,
-    DaemonUninstall,
+    DaemonToggle,
     AuthOpen(String),
     AuthLogout(String),
-    DaemonStateReady {
-        installed: bool,
-    },
+    DaemonStateReady { installed: bool },
     AuthStateReady(Vec<AuthRow>),
-    /// Show a transient toast on the settings dialog (e.g. install/uninstall
-    /// failure message).
     ShowToast(String),
 }
 
@@ -80,7 +75,7 @@ impl Component for SettingsModel {
                             set_valign: gtk::Align::Center,
                             #[watch]
                             set_label: if model.installed { "Uninstall" } else { "Install" },
-                            connect_clicked => if model.installed { SettingsMsg::DaemonUninstall } else { SettingsMsg::DaemonInstall },
+                            connect_clicked => SettingsMsg::DaemonToggle,
                         },
                     },
                 },
@@ -131,12 +126,15 @@ impl Component for SettingsModel {
                 probe_daemon_state(sender.clone());
                 probe_auth_state(sender);
             }
-            SettingsMsg::DaemonInstall => spawn_desktop(sender.clone(), "install", || {
-                let cli_exe = desktop::daemon::find_cli_on_path()?;
-                desktop::daemon::install(&cli_exe).map(|_| ())
-            }),
-            SettingsMsg::DaemonUninstall => {
-                spawn_desktop(sender.clone(), "uninstall", desktop::daemon::uninstall)
+            SettingsMsg::DaemonToggle => {
+                if self.installed {
+                    spawn_desktop(sender.clone(), "uninstall", desktop::daemon::uninstall)
+                } else {
+                    spawn_desktop(sender.clone(), "install", || {
+                        let exe = std::env::current_exe()?;
+                        desktop::daemon::install(&exe, "--daemon-run").map(|_| ())
+                    })
+                }
             }
             SettingsMsg::AuthOpen(provider) => {
                 self.auth_dialog

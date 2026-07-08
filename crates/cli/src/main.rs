@@ -169,7 +169,7 @@ async fn daemon_command(command: DaemonCommand) -> anyhow::Result<()> {
             #[cfg(target_os = "linux")]
             {
                 let exe = std::env::current_exe().context("failed to locate current executable")?;
-                desktop::daemon::install(&exe)?;
+                desktop::daemon::install(&exe, "daemon run")?;
             }
             Ok(())
         }

@@ -4,6 +4,8 @@
 //! fails the daemon is not installed and the UI should prompt the user to
 //! install it.
 
+use std::time::Duration;
+
 use async_trait::async_trait;
 use braindrain_daemon::{CachedProviderState, DaemonClient, DaemonStatus};
 
@@ -72,19 +74,28 @@ impl Backend for RemoteBackend {
 /// `DaemonClient::connect()` only builds a `zbus::Proxy` — it doesn't verify
 /// that the bus name is actually owned or activatable. That only surfaces on
 /// the first method call, so we probe with `status()` here to decide whether
-/// to treat the daemon as reachable.
+/// to treat the daemon as reachable. D-Bus activation is not instant (the
+/// daemon process needs a moment to start and claim the bus name), so the
+/// probe is retried a few times before giving up.
 pub async fn resolve() -> Option<Box<dyn Backend>> {
-    match RemoteBackend::connect().await {
-        Ok(backend) => match backend.status().await {
-            Ok(_) => Some(Box::new(backend)),
-            Err(error) => {
-                log::info!("daemon not reachable, treating as not installed: {error:?}");
-                None
-            }
-        },
+    let backend = match RemoteBackend::connect().await {
+        Ok(backend) => backend,
         Err(error) => {
             log::info!("daemon connect failed, treating as not installed: {error:?}");
-            None
+            return None;
+        }
+    };
+
+    for attempt in 1..=5 {
+        match backend.status().await {
+            Ok(_) => return Some(Box::new(backend)),
+            Err(error) => {
+                log::info!("daemon not reachable (attempt {attempt}): {error:?}");
+                if attempt < 5 {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
         }
     }
+    None
 }

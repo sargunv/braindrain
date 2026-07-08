@@ -39,7 +39,7 @@ pub const LINUX_DESKTOP_FILES: &[(&str, &str)] = &[
     ),
 ];
 
-pub fn systemd_service_contents(exe: &Path) -> String {
+pub fn systemd_service_contents(exe: &Path, args: &str) -> String {
     format!(
         "\
 [Unit]
@@ -48,7 +48,7 @@ Description=BrainDrain D-Bus daemon
 [Service]
 Type=dbus
 BusName={BUS_NAME}
-ExecStart={} daemon run
+ExecStart={} {args}
 Restart=on-failure
 RestartSec=5
 ",
@@ -56,12 +56,12 @@ RestartSec=5
     )
 }
 
-pub fn dbus_service_contents(exe: &Path) -> String {
+pub fn dbus_service_contents(exe: &Path, args: &str) -> String {
     format!(
         "\
 [D-BUS Service]
 Name={BUS_NAME}
-Exec={} daemon run
+Exec={} {args}
 SystemdService={DAEMON_SERVICE_NAME}
 ",
         quoted_path(exe),
