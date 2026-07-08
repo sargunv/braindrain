@@ -6,7 +6,9 @@ use std::path::Path;
 use anyhow::Context;
 use tempfile::tempdir;
 
-use super::util::{PLASMOID_FILES, PLASMOID_ID, run_process, write_file};
+use super::util::{
+    PLASMOID_FILES, PLASMOID_ID, is_plasma_session, plasma_widget_dir, run_process, write_file,
+};
 
 /// Install or upgrade the Plasma widget for the current user.
 pub fn install() -> anyhow::Result<()> {
@@ -66,4 +68,14 @@ fn write_embedded_plasmoid(package_path: &Path) -> anyhow::Result<()> {
         write_file(&path, contents, "embedded Plasma package file")?;
     }
     Ok(())
+}
+
+/// Whether the current session is a KDE Plasma desktop.
+pub fn is_session_plasma() -> bool {
+    is_plasma_session()
+}
+
+/// Whether the Plasma widget is installed for the current user.
+pub fn is_installed() -> bool {
+    plasma_widget_dir().map(|p| p.exists()).unwrap_or(false)
 }

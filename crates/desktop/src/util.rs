@@ -167,3 +167,25 @@ pub fn quoted_path(path: &Path) -> String {
     let path = path.to_string_lossy();
     format!("\"{}\"", path.replace('\\', "\\\\").replace('"', "\\\""))
 }
+
+/// Whether the current session is a KDE Plasma desktop.
+///
+/// Checks `KDE_FULL_SESSION=1` (set by Plasma's session manager) and
+/// `XDG_CURRENT_DESKTOP` containing `KDE` (set by most Plasma sessions).
+/// Either is sufficient.
+pub fn is_plasma_session() -> bool {
+    if env::var_os("KDE_FULL_SESSION").is_some_and(|v| v == "1") {
+        return true;
+    }
+    env::var_os("XDG_CURRENT_DESKTOP")
+        .is_some_and(|v| v.to_string_lossy().split(':').any(|part| part == "KDE"))
+}
+
+/// Path to the installed Plasma widget directory, e.g.
+/// `~/.local/share/plasma/plasmoids/dev.sargunv.braindrain`.
+pub fn plasma_widget_dir() -> anyhow::Result<PathBuf> {
+    Ok(xdg_data_home()?
+        .join("plasma")
+        .join("plasmoids")
+        .join(PLASMOID_ID))
+}

@@ -1,4 +1,4 @@
-//! Settings sub-component: daemon install/uninstall and auth.
+//! Settings sub-component: integrations and accounts.
 
 use adw::prelude::*;
 use relm4::{
@@ -15,9 +15,11 @@ pub enum SettingsMsg {
     Show,
     RefreshState,
     DaemonToggle,
+    PlasmaToggle,
     AuthOpen(String),
     AuthLogout(String),
     DaemonStateReady { installed: bool },
+    PlasmaStateReady { available: bool, installed: bool },
     AuthStateReady(Vec<AuthRow>),
     ShowToast(String),
 }
@@ -39,7 +41,9 @@ pub enum SettingsOutput {
 #[derive(Debug)]
 pub struct SettingsModel {
     parent: gtk::Window,
-    installed: bool,
+    daemon_installed: bool,
+    plasma_available: bool,
+    plasma_installed: bool,
     auth_rows: Vec<AuthRow>,
     auth_dialog: Controller<AuthModel>,
 }
@@ -60,29 +64,39 @@ impl Component for SettingsModel {
 
             add = &adw::PreferencesPage {
                 add = &adw::PreferencesGroup {
-                    set_title: "Daemon",
-                    set_description: Some(
-                        "The daemon runs on demand whenever any BrainDrain client needs it. \
-                         Install/uninstall here configures that activation."
-                    ),
+                    set_title: "Integrations",
 
                     adw::ActionRow {
-                        set_title: "Daemon service",
+                        set_title: "Daemon",
                         #[watch]
-                        set_subtitle: if model.installed { "Installed" } else { "Not installed" },
+                        set_subtitle: if model.daemon_installed { "Installed" } else { "Not installed" },
 
                         add_suffix = &gtk::Button {
                             set_valign: gtk::Align::Center,
                             #[watch]
-                            set_label: if model.installed { "Uninstall" } else { "Install" },
+                            set_label: if model.daemon_installed { "Uninstall" } else { "Install" },
                             connect_clicked => SettingsMsg::DaemonToggle,
+                        },
+                    },
+
+                    adw::ActionRow {
+                        set_title: "KDE Plasma widget",
+                        #[watch]
+                        set_subtitle: if model.plasma_installed { "Installed" } else { "Not installed" },
+                        #[watch]
+                        set_visible: model.plasma_available,
+
+                        add_suffix = &gtk::Button {
+                            set_valign: gtk::Align::Center,
+                            #[watch]
+                            set_label: if model.plasma_installed { "Uninstall" } else { "Install" },
+                            connect_clicked => SettingsMsg::PlasmaToggle,
                         },
                     },
                 },
 
                 add = &adw::PreferencesGroup {
                     set_title: "Accounts",
-                    set_description: Some("Manage credentials for providers that support BrainDrain-managed login."),
 
                     #[name(auth_list)]
                     gtk::ListBox {
@@ -106,7 +120,9 @@ impl Component for SettingsModel {
 
         let model = SettingsModel {
             parent,
-            installed: false,
+            daemon_installed: false,
+            plasma_available: false,
+            plasma_installed: false,
             auth_rows: Vec::new(),
             auth_dialog,
         };
@@ -124,16 +140,28 @@ impl Component for SettingsModel {
             }
             SettingsMsg::RefreshState => {
                 probe_daemon_state(sender.clone());
+                probe_plasma_state(sender.clone());
                 probe_auth_state(sender);
             }
             SettingsMsg::DaemonToggle => {
-                if self.installed {
+                if self.daemon_installed {
                     spawn_desktop(sender.clone(), "uninstall", desktop::daemon::uninstall)
                 } else {
                     spawn_desktop(sender.clone(), "install", || {
                         let exe = std::env::current_exe()?;
                         desktop::daemon::install(&exe, "--daemon-run").map(|_| ())
                     })
+                }
+            }
+            SettingsMsg::PlasmaToggle => {
+                if self.plasma_installed {
+                    spawn_desktop(
+                        sender.clone(),
+                        "plasma uninstall",
+                        desktop::plasma::uninstall,
+                    )
+                } else {
+                    spawn_desktop(sender.clone(), "plasma install", desktop::plasma::install)
                 }
             }
             SettingsMsg::AuthOpen(provider) => {
@@ -147,8 +175,15 @@ impl Component for SettingsModel {
                 });
             }
             SettingsMsg::DaemonStateReady { installed } => {
-                self.installed = installed;
+                self.daemon_installed = installed;
                 let _ = sender.output(SettingsOutput::DaemonChanged);
+            }
+            SettingsMsg::PlasmaStateReady {
+                available,
+                installed,
+            } => {
+                self.plasma_available = available;
+                self.plasma_installed = installed;
             }
             SettingsMsg::AuthStateReady(rows) => {
                 self.auth_rows = rows;
@@ -176,6 +211,13 @@ impl Component for SettingsModel {
 fn probe_daemon_state(sender: ComponentSender<SettingsModel>) {
     sender.spawn_oneshot_command(|| SettingsMsg::DaemonStateReady {
         installed: desktop::daemon::is_installed(),
+    });
+}
+
+fn probe_plasma_state(sender: ComponentSender<SettingsModel>) {
+    sender.spawn_oneshot_command(|| SettingsMsg::PlasmaStateReady {
+        available: desktop::plasma::is_session_plasma(),
+        installed: desktop::plasma::is_installed(),
     });
 }
 
@@ -214,7 +256,7 @@ where
     sender.spawn_oneshot_command(move || match f() {
         Ok(()) => SettingsMsg::RefreshState,
         Err(error) => {
-            log::error!("daemon {label} failed: {error:?}");
+            log::error!("{label} failed: {error:?}");
             SettingsMsg::ShowToast(error.to_string())
         }
     });
