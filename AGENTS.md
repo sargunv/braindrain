@@ -11,5 +11,8 @@ BrainDrain is a Rust workspace with platform frontends:
 - `apps/macos`: SwiftUI menu-bar app.
 - `apps/plasma`: KDE Plasma widget.
 
-On Linux, GUI clients should prefer the D-Bus daemon and fall back to embedded
-`BrainDrainDaemon<ServiceBackend>` only when the daemon is unavailable.
+On Linux, the daemon is the single source of truth: once `daemon install` has
+been run, it is D-Bus auto-activatable, so any client call on the bus name
+`dev.sargunv.BrainDrain1` will start it on demand. GUI clients (GTK app, Plasma
+widget) talk to it over the session bus and surface an install prompt when it
+isn't reachable; there is no in-process fallback.

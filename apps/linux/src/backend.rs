@@ -1,26 +1,16 @@
-//! Unified backend abstraction: the GUI talks to either a running
-//! `braindrain-daemon` over D-Bus (preferred) or an in-process embedded
-//! daemon (fallback) through a single async trait.
+//! Backend abstraction for the GUI: it talks to the standalone
+//! `braindrain-daemon` over D-Bus. The daemon is D-Bus auto-activatable once
+//! installed, so attempting to connect will start it on demand; if connection
+//! fails the daemon is not installed and the UI should prompt the user to
+//! install it.
 
 use async_trait::async_trait;
-use braindrain_daemon::{
-    BrainDrainDaemon, CachedProviderState, DaemonClient, DaemonStatus, ServiceBackend,
-};
-/// Which backend is actually serving requests.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BackendMode {
-    /// Talking to the standalone `braindrain-daemon` over the session bus.
-    Remote,
-    /// Running an in-process `BrainDrainDaemon` (no D-Bus involved).
-    Embedded,
-}
+use braindrain_daemon::{CachedProviderState, DaemonClient, DaemonStatus};
 
-/// One async interface for both backend variants. The UI never branches on
-/// mode for data access — only for status display.
+/// One async interface over the daemon. The UI never needs to branch on mode.
 #[allow(dead_code)]
 #[async_trait]
 pub trait Backend: std::fmt::Debug + Send + Sync {
-    fn mode(&self) -> BackendMode;
     async fn provider_ids(&self) -> anyhow::Result<Vec<String>>;
     async fn status(&self) -> anyhow::Result<DaemonStatus>;
     async fn snapshot(&self, provider: &str) -> anyhow::Result<CachedProviderState>;
@@ -45,10 +35,6 @@ impl RemoteBackend {
 
 #[async_trait]
 impl Backend for RemoteBackend {
-    fn mode(&self) -> BackendMode {
-        BackendMode::Remote
-    }
-
     async fn provider_ids(&self) -> anyhow::Result<Vec<String>> {
         Ok(self.client.list_providers().await?)
     }
@@ -79,70 +65,26 @@ impl Backend for RemoteBackend {
     }
 }
 
-/// Wraps an in-process `BrainDrainDaemon<ServiceBackend>`, exposing the same
-/// trait surface. The daemon struct already returns typed values, so no JSON
-/// round-trip is needed.
-#[derive(Debug)]
-pub struct EmbeddedBackend {
-    daemon: BrainDrainDaemon<ServiceBackend>,
-}
-
-impl EmbeddedBackend {
-    pub fn new() -> Self {
-        Self {
-            daemon: BrainDrainDaemon::new(ServiceBackend),
-        }
-    }
-}
-
-impl Default for EmbeddedBackend {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait]
-impl Backend for EmbeddedBackend {
-    fn mode(&self) -> BackendMode {
-        BackendMode::Embedded
-    }
-
-    async fn provider_ids(&self) -> anyhow::Result<Vec<String>> {
-        Ok(self.daemon.provider_ids())
-    }
-
-    async fn status(&self) -> anyhow::Result<DaemonStatus> {
-        Ok(self.daemon.status().await)
-    }
-
-    async fn snapshot(&self, provider: &str) -> anyhow::Result<CachedProviderState> {
-        Ok(self.daemon.provider_state(provider).await?)
-    }
-
-    async fn all_snapshots(&self) -> anyhow::Result<Vec<CachedProviderState>> {
-        Ok(self.daemon.all_states().await)
-    }
-
-    async fn refresh(&self, provider: &str) -> anyhow::Result<CachedProviderState> {
-        Ok(self.daemon.refresh_provider(provider).await?)
-    }
-
-    async fn refresh_all(&self) -> anyhow::Result<Vec<CachedProviderState>> {
-        let results = self.daemon.refresh_all().await;
-        let states = results.into_iter().collect::<Result<Vec<_>, _>>()?;
-        Ok(states)
-    }
-}
-
-/// Resolve a backend at startup: prefer the running standalone daemon, fall
-/// back to an embedded in-process daemon if the session-bus connect fails.
-pub async fn resolve() -> (Box<dyn Backend>, BackendMode) {
+/// Attempt to connect to the daemon. Returns `Some` on success (the daemon is
+/// installed and now running, possibly having just been D-Bus activated), or
+/// `None` if the daemon is not installed.
+///
+/// `DaemonClient::connect()` only builds a `zbus::Proxy` — it doesn't verify
+/// that the bus name is actually owned or activatable. That only surfaces on
+/// the first method call, so we probe with `status()` here to decide whether
+/// to treat the daemon as reachable.
+pub async fn resolve() -> Option<Box<dyn Backend>> {
     match RemoteBackend::connect().await {
-        Ok(backend) => (Box::new(backend), BackendMode::Remote),
-        Err(_) => {
-            let embedded = EmbeddedBackend::new();
-            let mode = embedded.mode();
-            (Box::new(embedded), mode)
+        Ok(backend) => match backend.status().await {
+            Ok(_) => Some(Box::new(backend)),
+            Err(error) => {
+                log::info!("daemon not reachable, treating as not installed: {error:?}");
+                None
+            }
+        },
+        Err(error) => {
+            log::info!("daemon connect failed, treating as not installed: {error:?}");
+            None
         }
     }
 }

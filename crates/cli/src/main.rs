@@ -56,16 +56,13 @@ enum Command {
 enum DaemonCommand {
     /// Run the D-Bus daemon in the foreground.
     Run,
-    /// Install and start the user systemd and D-Bus activation files.
+    /// Install and activate the user systemd + D-Bus activation files.
+    ///
+    /// The daemon itself starts on demand the first time any client calls the
+    /// bus name; explicit start/stop is unnecessary.
     Install,
-    /// Remove the user systemd and D-Bus activation files.
+    /// Remove the user systemd + D-Bus activation files.
     Uninstall,
-    /// Start the installed user daemon service.
-    Start,
-    /// Stop the installed user daemon service.
-    Stop,
-    /// Restart the installed user daemon service.
-    Restart,
     /// Print daemon status and cached provider states.
     Status,
     /// List providers exposed by the daemon.
@@ -171,7 +168,8 @@ async fn daemon_command(command: DaemonCommand) -> anyhow::Result<()> {
             ensure_linux("daemon install")?;
             #[cfg(target_os = "linux")]
             {
-                desktop::daemon::install()?;
+                let exe = std::env::current_exe().context("failed to locate current executable")?;
+                desktop::daemon::install(&exe)?;
             }
             Ok(())
         }
@@ -180,30 +178,6 @@ async fn daemon_command(command: DaemonCommand) -> anyhow::Result<()> {
             #[cfg(target_os = "linux")]
             {
                 desktop::daemon::uninstall()?;
-            }
-            Ok(())
-        }
-        DaemonCommand::Start => {
-            ensure_linux("daemon start")?;
-            #[cfg(target_os = "linux")]
-            {
-                desktop::daemon::start()?;
-            }
-            Ok(())
-        }
-        DaemonCommand::Stop => {
-            ensure_linux("daemon stop")?;
-            #[cfg(target_os = "linux")]
-            {
-                desktop::daemon::stop()?;
-            }
-            Ok(())
-        }
-        DaemonCommand::Restart => {
-            ensure_linux("daemon restart")?;
-            #[cfg(target_os = "linux")]
-            {
-                desktop::daemon::restart()?;
             }
             Ok(())
         }
@@ -229,12 +203,7 @@ async fn daemon_client_command(command: DaemonCommand) -> anyhow::Result<()> {
             print_json(&client.refresh(&provider).await.context(DAEMON_HINT)?)
         }
         DaemonCommand::RefreshAll => print_json(&client.refresh_all().await.context(DAEMON_HINT)?),
-        DaemonCommand::Run
-        | DaemonCommand::Install
-        | DaemonCommand::Uninstall
-        | DaemonCommand::Start
-        | DaemonCommand::Stop
-        | DaemonCommand::Restart => {
+        DaemonCommand::Run | DaemonCommand::Install | DaemonCommand::Uninstall => {
             unreachable!("lifecycle commands are handled before connecting")
         }
     }

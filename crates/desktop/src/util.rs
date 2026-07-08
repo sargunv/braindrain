@@ -51,9 +51,6 @@ BusName={BUS_NAME}
 ExecStart={} daemon run
 Restart=on-failure
 RestartSec=5
-
-[Install]
-WantedBy=default.target
 ",
         quoted_path(exe),
     )
@@ -142,23 +139,6 @@ where
     run_process("systemctl", command_args)
 }
 
-/// Run systemctl --user and return its combined output; `Ok(false)` means the
-/// command ran but returned a non-zero status (used for `is-active`/`is-enabled`
-/// polling, which use exit status rather than stdout to signal truth).
-pub fn systemctl_user_status<I, S>(args: I) -> anyhow::Result<bool>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<OsStr>,
-{
-    let mut command_args = vec![OsString::from("--user")];
-    command_args.extend(args.into_iter().map(|arg| arg.as_ref().to_os_string()));
-    let output = ProcessCommand::new("systemctl")
-        .args(&command_args)
-        .output()
-        .context("failed to run systemctl")?;
-    Ok(output.status.success())
-}
-
 pub fn run_process<I, S>(program: &str, args: I) -> anyhow::Result<()>
 where
     I: IntoIterator<Item = S>,
@@ -186,14 +166,4 @@ where
 pub fn quoted_path(path: &Path) -> String {
     let path = path.to_string_lossy();
     format!("\"{}\"", path.replace('\\', "\\\\").replace('"', "\\\""))
-}
-
-/// Resolve the executable to advertise in generated unit/desktop files.
-///
-/// When `braindrain desktop install` runs, `current_exe` points at the CLI
-/// binary, which is what we want for `ExecStart` of the daemon (the daemon is
-/// launched via the CLI's `daemon run` subcommand). For the GUI `.desktop`
-/// entry we accept an explicit override (the GUI binary path).
-pub fn current_exe() -> anyhow::Result<PathBuf> {
-    env::current_exe().context("failed to locate current braindrain executable")
 }

@@ -8,3 +8,4 @@ license.workspace = true
 anyhow = { workspace = true }
 braindrain-daemon = { path = "../daemon" }
 tempfile = { workspace = true }
+thiserror = { workspace = true }

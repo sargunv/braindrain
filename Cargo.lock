@@ -437,6 +437,7 @@ dependencies = [
  "anyhow",
  "braindrain-daemon",
  "tempfile",
+ "thiserror",
 ]
 
 [[package]]

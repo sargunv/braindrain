@@ -9,11 +9,13 @@ use braindrain_core::{BalanceSnapshot, RateWindow, ResetCreditSnapshot};
 use braindrain_daemon::{CachedProviderState, DaemonStatus};
 use relm4::{
     Component, ComponentController, ComponentParts, ComponentSender, Controller, MessageBroker,
-    RelmWidgetExt, adw, gtk,
+    RelmWidgetExt, abstractions::Toaster, adw, gtk,
 };
 
-use crate::backend::{self, Backend, BackendMode};
+use crate::backend::{self, Backend};
 use crate::settings::SettingsModel;
+
+use braindrain_desktop as desktop;
 
 /// How often to auto-refresh usage in the background.
 const REFRESH_INTERVAL: Duration = Duration::from_secs(5 * 60);
@@ -35,19 +37,22 @@ pub fn provider_title(id: &str) -> &str {
 #[derive(Debug)]
 pub struct AppModel {
     backend: Option<Arc<dyn Backend>>,
-    mode: Option<BackendMode>,
     status: Option<DaemonStatus>,
     selected: Option<String>,
     refreshing: bool,
-    last_error: Option<String>,
+    toaster: Toaster,
     settings: Controller<SettingsModel>,
 }
 
 #[derive(Debug)]
 pub enum AppMsg {
+    ResolveBackend,
     BackendReady {
-        backend: Arc<dyn Backend>,
-        mode: BackendMode,
+        backend: Option<Arc<dyn Backend>>,
+    },
+    InstallDaemon,
+    InstallResult {
+        result: anyhow::Result<()>,
     },
     StatusLoaded {
         result: anyhow::Result<DaemonStatus>,
@@ -56,7 +61,6 @@ pub enum AppMsg {
     Tick,
     SelectProvider(String),
     ShowSettings,
-    ReloadStatus,
 }
 
 #[relm4::component(pub)]
@@ -72,77 +76,71 @@ impl Component for AppModel {
             set_default_height: 560,
             set_title: Some("BrainDrain"),
 
-            adw::ToolbarView {
-                add_top_bar = &adw::HeaderBar {
-                    #[wrap(Some)]
-                    set_title_widget = &adw::WindowTitle {
-                        set_title: "BrainDrain",
-                        #[watch]
-                        set_subtitle: &header_subtitle(&model),
-                    },
+            #[local_ref]
+            toast_overlay -> adw::ToastOverlay {
+                adw::ToolbarView {
+                    add_top_bar = &adw::HeaderBar {
+                        #[wrap(Some)]
+                        set_title_widget = &adw::WindowTitle {
+                            set_title: "BrainDrain",
+                            #[watch]
+                            set_subtitle: &header_subtitle(&model),
+                        },
 
-                    pack_start = &gtk::Button {
-                        set_icon_name: "view-refresh-symbolic",
-                        set_tooltip_text: Some("Refresh"),
-                        #[watch]
-                        set_sensitive: !model.refreshing,
-                        connect_clicked => AppMsg::RefreshAll,
-                    },
+                        pack_start = &gtk::Button {
+                            set_icon_name: "view-refresh-symbolic",
+                            set_tooltip_text: Some("Refresh"),
+                            #[watch]
+                            set_sensitive: !model.refreshing && model.backend.is_some(),
+                            connect_clicked => AppMsg::RefreshAll,
+                        },
 
-                    pack_end = &gtk::Button {
-                        set_icon_name: "emblem-system-symbolic",
-                        set_tooltip_text: Some("Settings"),
-                        connect_clicked => AppMsg::ShowSettings,
-                    },
-                },
-
-                gtk::Box {
-                    set_orientation: gtk::Orientation::Vertical,
-                    set_margin_top: 12,
-                    set_margin_bottom: 12,
-                    set_margin_start: 12,
-                    set_margin_end: 12,
-                    set_spacing: 12,
-
-                    #[name(error_label)]
-                    gtk::Label {
-                        #[watch]
-                        set_visible: model.last_error.is_some(),
-                        #[watch]
-                        set_label: model.last_error.as_deref().unwrap_or_default(),
-                        add_css_class: "error",
-                        set_halign: gtk::Align::Start,
-                        set_wrap: true,
-                    },
-
-                    #[name(provider_group)]
-                    adw::ToggleGroup {
-                        set_halign: gtk::Align::Fill,
-                        set_homogeneous: true,
-                        set_can_shrink: true,
-                    },
-
-                    gtk::ScrolledWindow {
-                        set_hscrollbar_policy: gtk::PolicyType::Never,
-                        set_vscrollbar_policy: gtk::PolicyType::Automatic,
-                        set_expand: true,
-
-                        adw::Clamp {
-                            set_maximum_size: 560,
-                            set_tightening_threshold: 420,
-
-                            #[name(content_box)]
-                            gtk::Box {
-                                set_orientation: gtk::Orientation::Vertical,
-                                set_margin_top: 18,
-                                set_margin_bottom: 18,
-                                set_margin_start: 18,
-                                set_margin_end: 18,
-                                set_spacing: 18,
-                            },
+                        pack_end = &gtk::Button {
+                            set_icon_name: "emblem-system-symbolic",
+                            set_tooltip_text: Some("Settings"),
+                            connect_clicked => AppMsg::ShowSettings,
                         },
                     },
 
+                    gtk::Box {
+                        set_orientation: gtk::Orientation::Vertical,
+                        set_margin_top: 12,
+                        set_margin_bottom: 12,
+                        set_margin_start: 12,
+                        set_margin_end: 12,
+                        set_spacing: 12,
+
+                        #[name(provider_group)]
+                        adw::ToggleGroup {
+                            set_halign: gtk::Align::Fill,
+                            set_homogeneous: true,
+                            set_can_shrink: true,
+                            #[watch]
+                            set_visible: model.backend.is_some(),
+                        },
+
+                        gtk::ScrolledWindow {
+                            set_hscrollbar_policy: gtk::PolicyType::Never,
+                            set_vscrollbar_policy: gtk::PolicyType::Automatic,
+                            set_expand: true,
+
+                            adw::Clamp {
+                                set_maximum_size: 560,
+                                set_tightening_threshold: 420,
+
+                                #[name(content_box)]
+                                gtk::Box {
+                                    set_orientation: gtk::Orientation::Vertical,
+                                    set_margin_top: 18,
+                                    set_margin_bottom: 18,
+                                    set_margin_start: 18,
+                                    set_margin_end: 18,
+                                    set_spacing: 18,
+                                },
+                            },
+                        },
+
+                    }
                 }
             }
         }
@@ -159,18 +157,19 @@ impl Component for AppModel {
                 &crate::settings::SETTINGS_BROKER,
             )
             .forward(sender.input_sender(), |msg| match msg {
-                crate::settings::SettingsOutput::DaemonChanged => AppMsg::ReloadStatus,
+                crate::settings::SettingsOutput::DaemonChanged => AppMsg::ResolveBackend,
             });
 
         let model = AppModel {
             backend: None,
-            mode: None,
             status: None,
             selected: None,
             refreshing: false,
-            last_error: None,
+            toaster: Toaster::default(),
             settings,
         };
+
+        let toast_overlay = model.toaster.overlay_widget();
 
         let widgets = view_output!();
         widgets.provider_group.connect_active_name_notify(|group| {
@@ -179,13 +178,7 @@ impl Component for AppModel {
             }
         });
 
-        sender.oneshot_command(async move {
-            let (backend, mode) = backend::resolve().await;
-            AppMsg::BackendReady {
-                backend: Arc::from(backend),
-                mode,
-            }
-        });
+        sender.input(AppMsg::ResolveBackend);
 
         sender.command(|out, shutdown| async move {
             loop {
@@ -203,36 +196,66 @@ impl Component for AppModel {
 
     fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>, _root: &Self::Root) {
         match msg {
-            AppMsg::BackendReady { backend, mode } => {
-                self.backend = Some(backend.clone());
-                self.mode = Some(mode);
-                fetch_status(backend, sender);
+            AppMsg::ResolveBackend => {
+                sender.oneshot_command(async move {
+                    let backend = backend::resolve().await.map(Arc::from);
+                    AppMsg::BackendReady { backend }
+                });
             }
+
+            AppMsg::BackendReady { backend } => {
+                self.backend = backend;
+                self.status = None;
+                self.selected = None;
+                if let Some(b) = &self.backend {
+                    fetch_status(Arc::clone(b), sender);
+                }
+            }
+
+            AppMsg::InstallDaemon => {
+                sender.spawn_oneshot_command(|| {
+                    let cli_exe = match desktop::daemon::find_cli_on_path() {
+                        Ok(p) => p,
+                        Err(error) => {
+                            log::error!("daemon install failed: {error:?}");
+                            return AppMsg::InstallResult {
+                                result: Err(anyhow::Error::from(error)),
+                            };
+                        }
+                    };
+                    match desktop::daemon::install(&cli_exe).map(|_| ()) {
+                        Ok(()) => AppMsg::InstallResult { result: Ok(()) },
+                        Err(error) => {
+                            log::error!("daemon install failed: {error:?}");
+                            AppMsg::InstallResult { result: Err(error) }
+                        }
+                    }
+                });
+            }
+
+            AppMsg::InstallResult { result } => match result {
+                Ok(()) => sender.input(AppMsg::ResolveBackend),
+                Err(error) => self.toaster.toast(&error.to_string()),
+            },
 
             AppMsg::StatusLoaded { result } => {
                 self.refreshing = false;
                 match result {
-                    Ok(status) => {
-                        self.last_error = None;
-                        self.apply_status(status);
-                    }
-                    Err(error) => {
-                        self.last_error = Some(error.to_string());
-                    }
+                    Ok(status) => self.apply_status(status),
+                    Err(error) => self.toaster.toast(&error.to_string()),
                 }
             }
 
             AppMsg::RefreshAll | AppMsg::Tick => {
-                if !self.refreshing {
+                if !self.refreshing
+                    && let Some(backend) = self.backend.clone()
+                {
                     self.refreshing = true;
-                    if let Some(backend) = &self.backend {
-                        let backend = Arc::clone(backend);
-                        sender.oneshot_command(async move {
-                            backend.refresh_all().await.ok();
-                            let status = backend.status().await;
-                            AppMsg::StatusLoaded { result: status }
-                        });
-                    }
+                    sender.oneshot_command(async move {
+                        backend.refresh_all().await.ok();
+                        let status = backend.status().await;
+                        AppMsg::StatusLoaded { result: status }
+                    });
                 }
             }
 
@@ -244,12 +267,6 @@ impl Component for AppModel {
 
             AppMsg::ShowSettings => {
                 self.settings.emit(crate::settings::SettingsMsg::Show);
-            }
-
-            AppMsg::ReloadStatus => {
-                if let Some(backend) = &self.backend {
-                    fetch_status(Arc::clone(backend), sender);
-                }
             }
         }
     }
@@ -282,21 +299,19 @@ fn fetch_status(backend: Arc<dyn Backend>, sender: ComponentSender<AppModel>) {
 }
 
 fn header_subtitle(model: &AppModel) -> String {
-    let mode = match model.mode {
-        Some(BackendMode::Remote) => "Using daemon",
-        Some(BackendMode::Embedded) => "Embedded mode",
-        None => "Connecting…",
-    };
+    if model.backend.is_none() {
+        return "Daemon not installed".to_owned();
+    }
     if model.refreshing {
-        return format!("{mode} · Refreshing…");
+        return "Refreshing…".to_owned();
     }
     if let Some(status) = &model.status
         && let Some(first) = status.providers.first()
         && let Some(t) = first.last_success_at
     {
-        return format!("{} · Updated {}", mode, format_time(t));
+        return format!("Updated {}", format_time(t));
     }
-    mode.to_owned()
+    String::new()
 }
 
 fn format_time(t: time::OffsetDateTime) -> String {
@@ -376,6 +391,12 @@ fn rebuild_content(content_box: &gtk::Box, model: &AppModel) {
     while let Some(child) = content_box.first_child() {
         content_box.remove(&child);
     }
+
+    if model.backend.is_none() {
+        content_box.append(&install_prompt());
+        return;
+    }
+
     let Some(status) = &model.status else {
         content_box.append(&status_page("Loading", None));
         return;
@@ -391,6 +412,24 @@ fn rebuild_content(content_box: &gtk::Box, model: &AppModel) {
     };
 
     content_box.append(&build_provider_content(state));
+}
+
+fn install_prompt() -> adw::StatusPage {
+    let page = adw::StatusPage::new();
+    page.set_title("Daemon not installed");
+    page.set_description(Some(
+        "Install the BrainDrain daemon to start tracking usage. It runs on demand whenever any client needs it.",
+    ));
+    page.set_icon_name(Some("emblem-system-symbolic"));
+
+    let button = gtk::Button::with_label("Install daemon");
+    button.add_css_class("suggested-action");
+    button.add_css_class("pill");
+    button.set_halign(gtk::Align::Center);
+    button.connect_clicked(|_| APP_BROKER.send(AppMsg::InstallDaemon));
+    page.set_child(Some(&button));
+
+    page
 }
 
 fn build_provider_content(state: &CachedProviderState) -> gtk::Box {

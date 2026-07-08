@@ -103,14 +103,27 @@ impl Component for AuthModel {
                         set_spacing: 12,
                     },
 
-                    gtk::Label {
+                    gtk::Box {
+                        set_orientation: gtk::Orientation::Horizontal,
+                        set_spacing: 6,
+                        set_halign: gtk::Align::Start,
                         #[watch]
                         set_visible: model.last_error.is_some(),
-                        #[watch]
-                        set_label: model.last_error.as_deref().unwrap_or_default(),
-                        add_css_class: "error",
-                        set_wrap: true,
-                        set_xalign: 0.0,
+
+                        gtk::Image {
+                            set_icon_name: Some("dialog-warning-symbolic"),
+                            add_css_class: "error",
+                        },
+
+                        gtk::Label {
+                            #[watch]
+                            set_label: model.last_error.as_deref().unwrap_or_default(),
+                            add_css_class: "error",
+                            add_css_class: "caption",
+                            set_wrap: true,
+                            set_xalign: 0.0,
+                            set_halign: gtk::Align::Start,
+                        },
                     },
 
                     gtk::Box {

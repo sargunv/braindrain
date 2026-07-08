@@ -1,42 +1,50 @@
 //! Daemon systemd user unit + D-Bus activation lifecycle.
 //!
-//! These functions are thin extractions of what used to live inline in the
-//! `braindrain` CLI; behavior is identical.
+//! The daemon is D-Bus auto-activatable: once `install()` has been run, any
+//! client call on the bus name will cause systemd to start the unit on demand.
+//! There is no need for explicit start/stop/restart controls — stopping is
+//! futile (the next call re-activates), and starting is implicit.
 
-use std::path::PathBuf;
-
-use anyhow::Context;
+use std::env;
+use std::path::{Path, PathBuf};
 
 use super::util::{
-    DAEMON_SERVICE_NAME, current_exe, daemon_service_path, dbus_service_contents,
-    dbus_service_path, remove_file_if_exists, systemctl_user, systemctl_user_status,
-    systemd_service_contents, write_file,
+    DAEMON_SERVICE_NAME, daemon_service_path, dbus_service_contents, dbus_service_path,
+    remove_file_if_exists, systemctl_user, systemd_service_contents, write_file,
 };
 
-/// Install and immediately start the user systemd + D-Bus activation files.
+/// Error returned when the `braindrain` CLI binary cannot be located on `PATH`.
+/// Carries enough context for the GUI to surface a useful install-prompt error.
+#[derive(Debug, thiserror::Error)]
+#[error("the `braindrain` CLI binary was not found on PATH; install it first")]
+pub struct DaemonCliNotFound;
+
+/// Install the user systemd + D-Bus activation files.
 ///
-/// Returns the path of the installed systemd user unit.
-pub fn install() -> anyhow::Result<PathBuf> {
-    let exe = current_exe()?;
+/// `cli_exe` is the absolute path to the `braindrain` CLI binary, which the
+/// unit's `ExecStart` invokes as `<cli_exe> daemon run`. The daemon itself is
+/// not started or enabled here — it activates on demand the first time any
+/// client calls the bus name. Returns the path of the installed systemd user
+/// unit.
+pub fn install(cli_exe: &Path) -> anyhow::Result<PathBuf> {
     let service_path = daemon_service_path()?;
     let dbus_path = dbus_service_path()?;
 
     write_file(
         &service_path,
-        &systemd_service_contents(&exe),
+        &systemd_service_contents(cli_exe),
         "systemd user service",
     )?;
-    write_file(&dbus_path, &dbus_service_contents(&exe), "D-Bus service")?;
+    write_file(&dbus_path, &dbus_service_contents(cli_exe), "D-Bus service")?;
 
     systemctl_user(["daemon-reload"])?;
-    systemctl_user(["enable", "--now", DAEMON_SERVICE_NAME])?;
 
     println!("installed {}", service_path.display());
     println!("installed {}", dbus_path.display());
     Ok(service_path)
 }
 
-/// Disable and remove the user systemd + D-Bus activation files.
+/// Stop and remove the user systemd + D-Bus activation files.
 pub fn uninstall() -> anyhow::Result<()> {
     let service_path = daemon_service_path()?;
     let dbus_path = dbus_service_path()?;
@@ -51,53 +59,25 @@ pub fn uninstall() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Start the installed user daemon service.
-pub fn start() -> anyhow::Result<()> {
-    systemctl_user(["start", DAEMON_SERVICE_NAME])
-}
-
-/// Stop the installed user daemon service.
-pub fn stop() -> anyhow::Result<()> {
-    systemctl_user(["stop", DAEMON_SERVICE_NAME])
-}
-
-/// Restart the installed user daemon service.
-pub fn restart() -> anyhow::Result<()> {
-    systemctl_user(["restart", DAEMON_SERVICE_NAME])
-}
-
-/// Enable (autostart at login) the installed user daemon service.
-pub fn enable() -> anyhow::Result<()> {
-    systemctl_user(["enable", DAEMON_SERVICE_NAME])
-}
-
-/// Disable (no autostart at login) the installed user daemon service.
-pub fn disable() -> anyhow::Result<()> {
-    systemctl_user(["disable", DAEMON_SERVICE_NAME])
-}
-
 /// Whether the systemd user unit file exists on disk.
+///
+/// This is the source of truth for "is the daemon configured for this user":
+/// when true, D-Bus activation will start the daemon on demand.
 pub fn is_installed() -> bool {
     daemon_service_path().map(|p| p.exists()).unwrap_or(false)
 }
 
-/// Whether the daemon service is currently active (`systemctl --user is-active`).
-pub fn is_running() -> bool {
-    systemctl_user_status(["is-active", "--quiet", DAEMON_SERVICE_NAME]).unwrap_or(false)
-}
+/// Locate the `braindrain` CLI binary on `PATH`.
+///
+/// Used by callers that aren't the CLI itself (e.g. the GUI app) to resolve
+/// the executable to advertise in `ExecStart`. The CLI binary can pass its
+/// own `current_exe()` directly to [`install`].
+pub fn find_cli_on_path() -> Result<PathBuf, DaemonCliNotFound> {
+    const CLI_BASENAME: &str = "braindrain";
 
-/// Whether the daemon service is enabled for autostart at login.
-pub fn is_enabled() -> bool {
-    systemctl_user_status(["is-enabled", "--quiet", DAEMON_SERVICE_NAME]).unwrap_or(false)
-}
-
-/// Restart the service if it is installed; no-op (with context) otherwise.
-/// Convenience for the GUI when the user clicks "restart".
-pub fn ensure_started() -> anyhow::Result<()> {
-    if is_installed() {
-        start().context("failed to start daemon service")
-    } else {
-        install()?;
-        Ok(())
-    }
+    let path = env::var_os("PATH").ok_or(DaemonCliNotFound)?;
+    env::split_paths(&path)
+        .map(|dir| dir.join(CLI_BASENAME))
+        .find(|candidate| candidate.is_file())
+        .ok_or(DaemonCliNotFound)
 }

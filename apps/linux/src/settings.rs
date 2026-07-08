@@ -1,4 +1,4 @@
-//! Settings sub-component: daemon lifecycle, autostart toggle, and auth.
+//! Settings sub-component: daemon install/uninstall and auth.
 
 use adw::prelude::*;
 use relm4::{
@@ -16,19 +16,15 @@ pub enum SettingsMsg {
     RefreshState,
     DaemonInstall,
     DaemonUninstall,
-    DaemonStart,
-    DaemonStop,
-    DaemonRestart,
-    AutostartToggle(bool),
     AuthOpen(String),
     AuthLogout(String),
     DaemonStateReady {
         installed: bool,
-        running: bool,
-        enabled: bool,
-        error: Option<String>,
     },
     AuthStateReady(Vec<AuthRow>),
+    /// Show a transient toast on the settings dialog (e.g. install/uninstall
+    /// failure message).
+    ShowToast(String),
 }
 
 #[derive(Debug, Clone)]
@@ -40,6 +36,8 @@ pub struct AuthRow {
 
 #[derive(Debug)]
 pub enum SettingsOutput {
+    /// Emitted after the daemon install/uninstall state may have changed, so
+    /// the parent can re-resolve its backend.
     DaemonChanged,
 }
 
@@ -47,10 +45,7 @@ pub enum SettingsOutput {
 pub struct SettingsModel {
     parent: gtk::Window,
     installed: bool,
-    running: bool,
-    enabled: bool,
     auth_rows: Vec<AuthRow>,
-    last_error: Option<String>,
     auth_dialog: Controller<AuthModel>,
 }
 
@@ -71,7 +66,10 @@ impl Component for SettingsModel {
             add = &adw::PreferencesPage {
                 add = &adw::PreferencesGroup {
                     set_title: "Daemon",
-                    set_description: Some("Manage the background D-Bus service used by desktop integrations."),
+                    set_description: Some(
+                        "The daemon runs on demand whenever any BrainDrain client needs it. \
+                         Install/uninstall here configures that activation."
+                    ),
 
                     adw::ActionRow {
                         set_title: "Daemon service",
@@ -85,56 +83,6 @@ impl Component for SettingsModel {
                             connect_clicked => if model.installed { SettingsMsg::DaemonUninstall } else { SettingsMsg::DaemonInstall },
                         },
                     },
-
-                    adw::ActionRow {
-                        set_title: "Service status",
-                        #[watch]
-                        set_subtitle: if model.running { "Running" } else { "Stopped" },
-
-                        add_suffix = &gtk::Box {
-                            set_orientation: gtk::Orientation::Horizontal,
-                            set_valign: gtk::Align::Center,
-                            set_spacing: 0,
-                            add_css_class: "linked",
-
-                            gtk::Button {
-                                set_icon_name: "media-playback-start-symbolic",
-                                set_tooltip_text: Some("Start"),
-                                #[watch]
-                                set_sensitive: model.installed && !model.running,
-                                connect_clicked => SettingsMsg::DaemonStart,
-                            },
-                            gtk::Button {
-                                set_icon_name: "media-playback-stop-symbolic",
-                                set_tooltip_text: Some("Stop"),
-                                #[watch]
-                                set_sensitive: model.installed && model.running,
-                                connect_clicked => SettingsMsg::DaemonStop,
-                            },
-                            gtk::Button {
-                                set_icon_name: "view-refresh-symbolic",
-                                set_tooltip_text: Some("Restart"),
-                                #[watch]
-                                set_sensitive: model.installed,
-                                connect_clicked => SettingsMsg::DaemonRestart,
-                            },
-                        },
-                    },
-
-                    adw::SwitchRow {
-                        set_title: "Autostart at login",
-                        #[watch]
-                        set_subtitle: if model.enabled {
-                            "The daemon starts when you log in"
-                        } else {
-                            "The daemon does not autostart"
-                        },
-                        #[watch]
-                        set_sensitive: model.installed,
-                        #[watch]
-                        set_active: model.enabled,
-                        connect_activated => SettingsMsg::AutostartToggle(!model.enabled),
-                    },
                 },
 
                 add = &adw::PreferencesGroup {
@@ -145,16 +93,6 @@ impl Component for SettingsModel {
                     gtk::ListBox {
                         add_css_class: "boxed-list",
                         set_selection_mode: gtk::SelectionMode::None,
-                    },
-                },
-
-                add = &adw::PreferencesGroup {
-                    #[watch]
-                    set_visible: model.last_error.is_some(),
-                    add = &adw::ActionRow {
-                        set_title: "Error",
-                        #[watch]
-                        set_subtitle: model.last_error.as_deref().unwrap_or_default(),
                     },
                 },
             },
@@ -174,10 +112,7 @@ impl Component for SettingsModel {
         let model = SettingsModel {
             parent,
             installed: false,
-            running: false,
-            enabled: false,
             auth_rows: Vec::new(),
-            last_error: None,
             auth_dialog,
         };
 
@@ -186,10 +121,10 @@ impl Component for SettingsModel {
         ComponentParts { model, widgets }
     }
 
-    fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>, _root: &Self::Root) {
+    fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>, root: &Self::Root) {
         match msg {
             SettingsMsg::Show => {
-                _root.present(Some(&self.parent));
+                root.present(Some(&self.parent));
                 sender.input(SettingsMsg::RefreshState);
             }
             SettingsMsg::RefreshState => {
@@ -197,26 +132,11 @@ impl Component for SettingsModel {
                 probe_auth_state(sender);
             }
             SettingsMsg::DaemonInstall => spawn_desktop(sender.clone(), "install", || {
-                desktop::daemon::install().map(|_| ())
+                let cli_exe = desktop::daemon::find_cli_on_path()?;
+                desktop::daemon::install(&cli_exe).map(|_| ())
             }),
             SettingsMsg::DaemonUninstall => {
                 spawn_desktop(sender.clone(), "uninstall", desktop::daemon::uninstall)
-            }
-            SettingsMsg::DaemonStart => {
-                spawn_desktop(sender.clone(), "start", desktop::daemon::start)
-            }
-            SettingsMsg::DaemonStop => spawn_desktop(sender.clone(), "stop", desktop::daemon::stop),
-            SettingsMsg::DaemonRestart => {
-                spawn_desktop(sender.clone(), "restart", desktop::daemon::restart)
-            }
-            SettingsMsg::AutostartToggle(enable) => {
-                spawn_desktop(sender.clone(), "autostart", move || {
-                    if enable {
-                        desktop::daemon::enable()
-                    } else {
-                        desktop::daemon::disable()
-                    }
-                })
             }
             SettingsMsg::AuthOpen(provider) => {
                 self.auth_dialog
@@ -228,20 +148,15 @@ impl Component for SettingsModel {
                     SettingsMsg::RefreshState
                 });
             }
-            SettingsMsg::DaemonStateReady {
-                installed,
-                running,
-                enabled,
-                error,
-            } => {
+            SettingsMsg::DaemonStateReady { installed } => {
                 self.installed = installed;
-                self.running = running;
-                self.enabled = enabled;
-                self.last_error = error;
                 let _ = sender.output(SettingsOutput::DaemonChanged);
             }
             SettingsMsg::AuthStateReady(rows) => {
                 self.auth_rows = rows;
+            }
+            SettingsMsg::ShowToast(message) => {
+                root.add_toast(adw::Toast::new(&message));
             }
         }
     }
@@ -263,9 +178,6 @@ impl Component for SettingsModel {
 fn probe_daemon_state(sender: ComponentSender<SettingsModel>) {
     sender.spawn_oneshot_command(|| SettingsMsg::DaemonStateReady {
         installed: desktop::daemon::is_installed(),
-        running: desktop::daemon::is_running(),
-        enabled: desktop::daemon::is_enabled(),
-        error: None,
     });
 }
 
@@ -305,12 +217,7 @@ where
         Ok(()) => SettingsMsg::RefreshState,
         Err(error) => {
             log::error!("daemon {label} failed: {error:?}");
-            SettingsMsg::DaemonStateReady {
-                installed: desktop::daemon::is_installed(),
-                running: desktop::daemon::is_running(),
-                enabled: desktop::daemon::is_enabled(),
-                error: Some(error.to_string()),
-            }
+            SettingsMsg::ShowToast(error.to_string())
         }
     });
 }
