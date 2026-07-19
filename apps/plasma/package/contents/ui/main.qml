@@ -534,6 +534,9 @@ PlasmoidItem {
     if (provider === "cursor") {
       return "Cursor";
     }
+    if (provider === "kimi") {
+      return "Kimi Code";
+    }
     if (provider === "zai") {
       return "z.ai";
     }

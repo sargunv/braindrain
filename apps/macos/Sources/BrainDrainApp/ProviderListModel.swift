@@ -117,6 +117,8 @@ struct ProviderViewState: Identifiable {
             "OpenAI"
         case "cursor":
             "Cursor"
+        case "kimi":
+            "Kimi Code"
         case "zai":
             "z.ai"
         case "opencode-go":
