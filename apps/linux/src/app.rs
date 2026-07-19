@@ -28,6 +28,7 @@ pub fn provider_title(id: &str) -> &str {
     match id {
         "openai" => "OpenAI",
         "cursor" => "Cursor",
+        "kimi" => "Kimi Code",
         "zai" => "z.ai",
         "opencode-go" => "OpenCode Go",
         other => other,

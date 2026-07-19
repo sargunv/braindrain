@@ -4,6 +4,10 @@ use braindrain_core::{
 };
 use braindrain_providers_cursor::{CURSOR_AUTH_TOKEN_ENV, CursorAccessTokenSource, CursorProvider};
 use braindrain_providers_cursor::{CURSOR_KEYCHAIN_ACCOUNT, CURSOR_KEYCHAIN_SERVICE};
+use braindrain_providers_kimi::{
+    KIMI_API_KEY_ENV, KIMI_CODE_BASE_URL_ENV, KIMI_SHARE_DIR_ENV, KimiAccessTokenSource,
+    KimiProvider,
+};
 use braindrain_providers_openai::OpenAiProvider;
 use braindrain_providers_opencode_go::{
     OPENCODE_AUTH_COOKIE_ENV, OPENCODE_KEYCHAIN_ACCOUNT, OPENCODE_KEYCHAIN_SERVICE,
@@ -37,6 +41,7 @@ pub fn provider_ids() -> Vec<ProviderId> {
     vec![
         ProviderId::openai(),
         ProviderId::cursor(),
+        ProviderId::kimi(),
         ProviderId::zai(),
         ProviderId::opencode_go(),
     ]
@@ -45,6 +50,7 @@ pub fn provider_ids() -> Vec<ProviderId> {
 pub fn normalize_provider_id(provider: &str) -> ProviderId {
     match provider {
         "codex" => ProviderId::openai(),
+        "kimi-code" | "kimi-coding-plan" => ProviderId::kimi(),
         "z.ai" => ProviderId::zai(),
         "opencode" | "zen-go" | "opencode-zen" => ProviderId::opencode_go(),
         provider => ProviderId::new(provider),
@@ -55,6 +61,7 @@ pub async fn info_provider(provider: &str) -> Result<ProviderInfo, ServiceError>
     match normalize_provider_id(provider).as_str() {
         ProviderId::OPENAI => Ok(info_openai()),
         ProviderId::CURSOR => Ok(info_cursor()),
+        ProviderId::KIMI => Ok(info_kimi()),
         ProviderId::ZAI => Ok(info_zai()),
         ProviderId::OPENCODE_GO => Ok(info_opencode_go().await),
         provider => Err(ServiceError::UnsupportedProvider {
@@ -71,6 +78,10 @@ pub async fn check_provider(provider: &str) -> Result<ProviderSnapshot, ServiceE
             .await
             .map_err(ServiceError::from),
         ProviderId::CURSOR => CursorProvider::default()
+            .refresh(context)
+            .await
+            .map_err(ServiceError::from),
+        ProviderId::KIMI => KimiProvider::default()
             .refresh(context)
             .await
             .map_err(ServiceError::from),
@@ -196,6 +207,39 @@ fn info_cursor() -> ProviderInfo {
     info
 }
 
+fn info_kimi() -> ProviderInfo {
+    let provider = KimiProvider::default();
+    let mut info = ProviderInfo::new(ProviderId::kimi());
+    info.push("usage_url", provider.usage_url().to_string());
+    info.push(
+        "credentials_path",
+        provider.credentials_path().display().to_string(),
+    );
+    info.push("env_share_dir", KIMI_SHARE_DIR_ENV);
+    info.push("env_api_key", KIMI_API_KEY_ENV);
+    info.push("env_base_url", KIMI_CODE_BASE_URL_ENV);
+
+    match provider.access_token() {
+        Ok(token) => {
+            info.push("auth_found", "true");
+            info.push(
+                "auth_source",
+                match token.source {
+                    KimiAccessTokenSource::Config => "config",
+                    KimiAccessTokenSource::KimiCli => "kimi_cli",
+                    KimiAccessTokenSource::Environment(name) => name,
+                },
+            );
+        }
+        Err(error) => {
+            info.push("auth_found", "false");
+            info.push("auth_error", error.to_string());
+        }
+    }
+
+    info
+}
+
 fn info_zai() -> ProviderInfo {
     let provider = ZaiProvider::default();
     let mut info = ProviderInfo::new(ProviderId::zai());
@@ -286,6 +330,11 @@ mod tests {
     fn normalizes_provider_aliases() {
         assert_eq!(normalize_provider_id("codex").as_str(), ProviderId::OPENAI);
         assert_eq!(normalize_provider_id("cursor").as_str(), ProviderId::CURSOR);
+        assert_eq!(
+            normalize_provider_id("kimi-code").as_str(),
+            ProviderId::KIMI
+        );
+        assert_eq!(normalize_provider_id("kimi").as_str(), ProviderId::KIMI);
         assert_eq!(normalize_provider_id("z.ai").as_str(), ProviderId::ZAI);
         assert_eq!(normalize_provider_id("zai").as_str(), ProviderId::ZAI);
         assert_eq!(
@@ -305,6 +354,7 @@ mod tests {
             vec![
                 ProviderId::openai(),
                 ProviderId::cursor(),
+                ProviderId::kimi(),
                 ProviderId::zai(),
                 ProviderId::opencode_go()
             ]
