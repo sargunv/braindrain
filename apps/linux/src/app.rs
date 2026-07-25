@@ -27,6 +27,7 @@ pub static APP_BROKER: MessageBroker<AppMsg> = MessageBroker::new();
 pub fn provider_title(id: &str) -> &str {
     match id {
         "openai" => "OpenAI",
+        "claude" => "Claude Code",
         "cursor" => "Cursor",
         "kimi" => "Kimi Code",
         "zai" => "z.ai",

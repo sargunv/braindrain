@@ -461,6 +461,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "braindrain-providers-claude"
+version = "0.1.0"
+dependencies = [
+ "braindrain-core",
+ "fs4",
+ "keyring",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "time",
+ "tokio",
+ "url",
+ "wiremock",
+]
+
+[[package]]
 name = "braindrain-providers-cursor"
 version = "0.1.0"
 dependencies = [
@@ -548,6 +566,7 @@ name = "braindrain-service"
 version = "0.1.0"
 dependencies = [
  "braindrain-core",
+ "braindrain-providers-claude",
  "braindrain-providers-cursor",
  "braindrain-providers-kimi",
  "braindrain-providers-openai",

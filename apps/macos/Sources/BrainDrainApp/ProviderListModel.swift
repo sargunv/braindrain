@@ -115,6 +115,8 @@ struct ProviderViewState: Identifiable {
         switch id {
         case "openai":
             "OpenAI"
+        case "claude":
+            "Claude Code"
         case "cursor":
             "Cursor"
         case "kimi":

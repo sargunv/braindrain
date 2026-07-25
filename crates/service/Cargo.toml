@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 braindrain-core = { path = "../core" }
+braindrain-providers-claude = { path = "../providers-claude" }
 braindrain-providers-cursor = { path = "../providers-cursor" }
 braindrain-providers-kimi = { path = "../providers-kimi" }
 braindrain-providers-openai = { path = "../providers-openai" }
