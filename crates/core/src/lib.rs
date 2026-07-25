@@ -17,6 +17,7 @@ pub struct ProviderId(String);
 
 impl ProviderId {
     pub const OPENAI: &'static str = "openai";
+    pub const CLAUDE: &'static str = "claude";
     pub const CURSOR: &'static str = "cursor";
     pub const KIMI: &'static str = "kimi";
     pub const ZAI: &'static str = "zai";
@@ -28,6 +29,10 @@ impl ProviderId {
 
     pub fn openai() -> Self {
         Self::new(Self::OPENAI)
+    }
+
+    pub fn claude() -> Self {
+        Self::new(Self::CLAUDE)
     }
 
     pub fn cursor() -> Self {

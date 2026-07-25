@@ -6,6 +6,7 @@ members = [
   "crates/core",
   "crates/daemon",
   "crates/desktop",
+  "crates/providers-claude",
   "crates/providers-cursor",
   "crates/providers-kimi",
   "crates/providers-openai",

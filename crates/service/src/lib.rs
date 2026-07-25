@@ -2,6 +2,10 @@ use braindrain_core::{
     Provider, ProviderCredentialSchema, ProviderCredentials, ProviderError, ProviderId,
     ProviderSnapshot, RefreshContext,
 };
+use braindrain_providers_claude::{
+    CLAUDE_CODE_OAUTH_TOKEN_ENV, CLAUDE_CONFIG_DIR_ENV, CLAUDE_KEYCHAIN_SERVICE,
+    ClaudeAccessTokenSource, ClaudeProvider,
+};
 use braindrain_providers_cursor::{CURSOR_AUTH_TOKEN_ENV, CursorAccessTokenSource, CursorProvider};
 use braindrain_providers_cursor::{CURSOR_KEYCHAIN_ACCOUNT, CURSOR_KEYCHAIN_SERVICE};
 use braindrain_providers_kimi::{
@@ -40,6 +44,7 @@ pub struct ProviderInfoField {
 pub fn provider_ids() -> Vec<ProviderId> {
     vec![
         ProviderId::openai(),
+        ProviderId::claude(),
         ProviderId::cursor(),
         ProviderId::kimi(),
         ProviderId::zai(),
@@ -50,6 +55,7 @@ pub fn provider_ids() -> Vec<ProviderId> {
 pub fn normalize_provider_id(provider: &str) -> ProviderId {
     match provider {
         "codex" => ProviderId::openai(),
+        "claude-code" | "anthropic" => ProviderId::claude(),
         "kimi-code" | "kimi-coding-plan" => ProviderId::kimi(),
         "z.ai" => ProviderId::zai(),
         "opencode" | "zen-go" | "opencode-zen" => ProviderId::opencode_go(),
@@ -60,6 +66,7 @@ pub fn normalize_provider_id(provider: &str) -> ProviderId {
 pub async fn info_provider(provider: &str) -> Result<ProviderInfo, ServiceError> {
     match normalize_provider_id(provider).as_str() {
         ProviderId::OPENAI => Ok(info_openai()),
+        ProviderId::CLAUDE => Ok(info_claude().await),
         ProviderId::CURSOR => Ok(info_cursor()),
         ProviderId::KIMI => Ok(info_kimi()),
         ProviderId::ZAI => Ok(info_zai()),
@@ -74,6 +81,10 @@ pub async fn check_provider(provider: &str) -> Result<ProviderSnapshot, ServiceE
     let context = RefreshContext::default();
     match normalize_provider_id(provider).as_str() {
         ProviderId::OPENAI => OpenAiProvider::default()
+            .refresh(context)
+            .await
+            .map_err(ServiceError::from),
+        ProviderId::CLAUDE => ClaudeProvider::default()
             .refresh(context)
             .await
             .map_err(ServiceError::from),
@@ -162,6 +173,46 @@ fn info_openai() -> ProviderInfo {
                 "plan",
                 identity
                     .and_then(|identity| identity.plan)
+                    .unwrap_or_else(|| "<unknown>".to_owned()),
+            );
+        }
+        Err(error) => {
+            info.push("auth_found", "false");
+            info.push("auth_error", error.to_string());
+        }
+    }
+
+    info
+}
+
+async fn info_claude() -> ProviderInfo {
+    let provider = ClaudeProvider::default();
+    let mut info = ProviderInfo::new(ProviderId::claude());
+    info.push("usage_url", provider.usage_url().to_string());
+    info.push(
+        "credentials_path",
+        provider.credentials_path().display().to_string(),
+    );
+    info.push("env_config_dir", CLAUDE_CONFIG_DIR_ENV);
+    info.push("env_oauth_token", CLAUDE_CODE_OAUTH_TOKEN_ENV);
+    info.push("keyring_service", CLAUDE_KEYCHAIN_SERVICE);
+
+    match provider.access_token().await {
+        Ok(token) => {
+            info.push("auth_found", "true");
+            info.push(
+                "auth_source",
+                match token.source {
+                    ClaudeAccessTokenSource::Config => "config",
+                    ClaudeAccessTokenSource::ClaudeCode => "claude_code",
+                    ClaudeAccessTokenSource::Keyring => "keyring",
+                    ClaudeAccessTokenSource::Environment(name) => name,
+                },
+            );
+            info.push(
+                "plan",
+                token
+                    .subscription_type
                     .unwrap_or_else(|| "<unknown>".to_owned()),
             );
         }
@@ -329,6 +380,15 @@ mod tests {
     #[test]
     fn normalizes_provider_aliases() {
         assert_eq!(normalize_provider_id("codex").as_str(), ProviderId::OPENAI);
+        assert_eq!(
+            normalize_provider_id("claude-code").as_str(),
+            ProviderId::CLAUDE
+        );
+        assert_eq!(
+            normalize_provider_id("anthropic").as_str(),
+            ProviderId::CLAUDE
+        );
+        assert_eq!(normalize_provider_id("claude").as_str(), ProviderId::CLAUDE);
         assert_eq!(normalize_provider_id("cursor").as_str(), ProviderId::CURSOR);
         assert_eq!(
             normalize_provider_id("kimi-code").as_str(),
@@ -353,6 +413,7 @@ mod tests {
             provider_ids(),
             vec![
                 ProviderId::openai(),
+                ProviderId::claude(),
                 ProviderId::cursor(),
                 ProviderId::kimi(),
                 ProviderId::zai(),

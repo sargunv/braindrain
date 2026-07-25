@@ -531,6 +531,9 @@ PlasmoidItem {
     if (provider === "openai") {
       return "OpenAI";
     }
+    if (provider === "claude") {
+      return "Claude Code";
+    }
     if (provider === "cursor") {
       return "Cursor";
     }
