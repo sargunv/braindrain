@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -82,17 +83,20 @@ struct ResetCreditView {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let listen = std::env::var("BRAINDRAIN_WEB_LISTEN")
-        .unwrap_or_else(|_| DEFAULT_LISTEN.to_owned())
-        .parse::<SocketAddr>()
-        .context("BRAINDRAIN_WEB_LISTEN must be a socket address")?;
-
     let state = AppState {
         daemon: BrainDrainDaemon::new(ServiceBackend),
     };
     spawn_refresh_loop(state.daemon.clone());
 
     let app = app(state);
+    if let Some(path) = std::env::var_os("BRAINDRAIN_WEB_UNIX_SOCKET").map(PathBuf::from) {
+        return serve_unix(path, app).await;
+    }
+
+    let listen = std::env::var("BRAINDRAIN_WEB_LISTEN")
+        .unwrap_or_else(|_| DEFAULT_LISTEN.to_owned())
+        .parse::<SocketAddr>()
+        .context("BRAINDRAIN_WEB_LISTEN must be a socket address")?;
     let listener = tokio::net::TcpListener::bind(listen)
         .await
         .with_context(|| format!("failed to listen on {listen}"))?;
@@ -102,6 +106,39 @@ async fn main() -> anyhow::Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("web server failed")
+}
+
+#[cfg(unix)]
+async fn serve_unix(path: PathBuf, app: Router) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    remove_stale_socket(&path)?;
+    let listener = tokio::net::UnixListener::bind(&path)
+        .with_context(|| format!("failed to listen on {}", path.display()))?;
+    println!("BrainDrain web listening on unix://{}", path.display());
+    let result = axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .context("web server failed");
+    let _ = std::fs::remove_file(&path);
+    result
+}
+
+#[cfg(not(unix))]
+async fn serve_unix(_path: PathBuf, _app: Router) -> anyhow::Result<()> {
+    anyhow::bail!("BRAINDRAIN_WEB_UNIX_SOCKET is only supported on Unix")
+}
+
+fn remove_stale_socket(path: &Path) -> anyhow::Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => {
+            Err(error).with_context(|| format!("failed to remove stale socket {}", path.display()))
+        }
+    }
 }
 
 fn app(state: AppState) -> Router {

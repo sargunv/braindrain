@@ -19,6 +19,10 @@ different socket address when a trusted reverse proxy needs to reach it. The web
 service does not implement browser authentication or credential management;
 deployments must put it behind an authentication proxy.
 
+On Unix, set `BRAINDRAIN_WEB_UNIX_SOCKET` to serve through a Unix-domain socket
+instead of TCP. The parent directory should be private to the service and its
+reverse proxy.
+
 ## Kimi Coding Plan
 
 Install and sign in with the first-party
