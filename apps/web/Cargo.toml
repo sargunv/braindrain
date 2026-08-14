@@ -1,0 +1,17 @@
+[package]
+name = "braindrain-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+askama = "0.14.0"
+axum = "0.8.8"
+braindrain-daemon = { path = "../../crates/daemon" }
+serde.workspace = true
+time.workspace = true
+tokio = { workspace = true, features = ["net", "signal"] }
+
+[dev-dependencies]
+braindrain-core = { path = "../../crates/core" }

@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "apps/linux",
+  "apps/web",
   "crates/bindings-uniffi",
   "crates/cli",
   "crates/core",

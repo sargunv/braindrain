@@ -10,6 +10,7 @@ BrainDrain is a Rust workspace with platform frontends:
 - `apps/linux`: GTK/libadwaita Relm4 GUI app (`braindrain-gui`).
 - `apps/macos`: SwiftUI menu-bar app.
 - `apps/plasma`: KDE Plasma widget.
+- `apps/web`: Axum/Askama web frontend embedding the daemon backend.
 
 On Linux, the daemon is the single source of truth: once `daemon install` has
 been run, it is D-Bus auto-activatable, so any client call on the bus name

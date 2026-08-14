@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta http-equiv="refresh" content="{{ page_refresh_seconds }}">
+    <title>BrainDrain</title>
+    <link rel="stylesheet" href="/style.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="app-header">
+        <div>
+          <h1>BrainDrain</h1>
+          <p class="status">
+            {% if refreshing %}<span class="spinner" aria-hidden="true"></span> Refreshing{% else %}{{ updated }}{% endif %}
+          </p>
+        </div>
+        <form action="/refresh{% match selected %}{% when Some with (provider) %}?provider={{ provider.id }}{% when None %}{% endmatch %}" method="post">
+          <button class="refresh" type="submit"{% if refreshing %} disabled{% endif %} aria-label="Refresh all providers" title="Refresh all providers">
+            <span aria-hidden="true">↻</span>
+            <span>Refresh</span>
+          </button>
+        </form>
+      </header>
+
+      {% if providers.is_empty() %}
+        <section class="empty-state">
+          <h2>No providers</h2>
+          <p>BrainDrain did not find any configured providers.</p>
+        </section>
+      {% else %}
+        <nav class="provider-tabs" aria-label="Providers">
+          {% for provider in providers %}
+            <a href="/?provider={{ provider.id }}"{% if provider.selected %} aria-current="page"{% endif %}>
+              {{ provider.title }}{% if provider.has_error %}<span class="error-dot" aria-label="Provider error"></span>{% endif %}
+            </a>
+          {% endfor %}
+        </nav>
+
+        {% match selected %}
+          {% when Some with (provider) %}
+            <section class="provider-card" aria-labelledby="provider-title">
+              <header class="provider-header">
+                <div>
+                  <h2 id="provider-title">{{ provider.title }}</h2>
+                  {% match provider.email %}{% when Some with (email) %}<p>{{ email }}</p>{% when None %}{% endmatch %}
+                </div>
+                {% match provider.plan %}{% when Some with (plan) %}<span class="plan">{{ plan }}</span>{% when None %}{% endmatch %}
+              </header>
+
+              {% match provider.error %}
+                {% when Some with (error) %}<p class="error-message"><strong>Refresh error</strong><br>{{ error }}</p>
+                {% when None %}
+              {% endmatch %}
+
+              {% if provider.empty %}
+                <p class="empty-usage">No usage data</p>
+              {% else %}
+                <div class="usage-list">
+                  {% for window in provider.windows %}
+                    <article class="quota-row">
+                      <div class="quota-labels">
+                        <span>{{ window.label }}</span>
+                        <span class="quota-meta">
+                          {% match window.reset %}{% when Some with (reset) %}<time{% match window.reset_exact %}{% when Some with (exact) %} datetime="{{ exact }}" title="Resets {{ exact }}"{% when None %}{% endmatch %}>Resets {{ reset }}</time>{% when None %}{% endmatch %}
+                          <strong>{{ window.percent }}</strong>
+                        </span>
+                      </div>
+                      <progress max="100" value="{{ window.percent_value }}">{{ window.percent }}</progress>
+                    </article>
+                  {% endfor %}
+
+                  {% for balance in provider.balances %}
+                    <article class="balance-row">
+                      <span>{{ balance.label }}</span>
+                      <strong>{{ balance.value }}</strong>
+                    </article>
+                  {% endfor %}
+
+                  {% if !provider.reset_credits.is_empty() %}
+                    <section class="credits">
+                      <h3>Quota reset credits</h3>
+                      {% for credit in provider.reset_credits %}
+                        <div><span>Granted {{ credit.granted }}</span><span>Expires {{ credit.expires }}</span></div>
+                      {% endfor %}
+                    </section>
+                  {% endif %}
+                </div>
+              {% endif %}
+            </section>
+          {% when None %}
+            <section class="empty-state"><h2>No provider selected</h2></section>
+        {% endmatch %}
+      {% endif %}
+    </main>
+  </body>
+</html>
