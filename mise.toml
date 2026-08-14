@@ -55,6 +55,9 @@ run = "cargo run -p braindrain-cli --"
 [tasks.daemon]
 run = "cargo run -p braindrain-cli -- daemon run"
 
+[tasks.web]
+run = "cargo run -p braindrain-web"
+
 [tasks.linux-build]
 run = "cargo build -p braindrain-gui"
 
