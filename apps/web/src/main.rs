@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -10,7 +11,7 @@ use axum::http::header::{
     CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, REFERRER_POLICY, X_CONTENT_TYPE_OPTIONS,
     X_FRAME_OPTIONS,
 };
-use axum::http::{HeaderValue, Request, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
@@ -27,6 +28,8 @@ const STYLE: &str = include_str!("../assets/style.css");
 #[derive(Clone)]
 struct AppState {
     daemon: BrainDrainDaemon<ServiceBackend>,
+    refresh_lock: Arc<tokio::sync::Mutex<()>>,
+    allowed_origin: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -85,8 +88,10 @@ struct ResetCreditView {
 async fn main() -> anyhow::Result<()> {
     let state = AppState {
         daemon: BrainDrainDaemon::new(ServiceBackend),
+        refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
+        allowed_origin: std::env::var("BRAINDRAIN_WEB_ORIGIN").ok(),
     };
-    spawn_refresh_loop(state.daemon.clone());
+    spawn_refresh_loop(state.clone());
 
     let app = app(state);
     if let Some(path) = std::env::var_os("BRAINDRAIN_WEB_UNIX_SOCKET").map(PathBuf::from) {
@@ -163,9 +168,16 @@ async fn index(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-async fn refresh_all(State(state): State<AppState>, Query(query): Query<PageQuery>) -> Redirect {
-    let _ = state.daemon.refresh_all().await;
-    redirect_to_provider(query.provider.as_deref())
+async fn refresh_all(
+    State(state): State<AppState>,
+    Query(query): Query<PageQuery>,
+    headers: HeaderMap,
+) -> Response {
+    if !origin_allowed(state.allowed_origin.as_deref(), headers.get("origin")) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    tokio::spawn(async move { refresh_once(&state).await });
+    redirect_to_provider(query.provider.as_deref()).into_response()
 }
 
 async fn style() -> impl IntoResponse {
@@ -192,13 +204,37 @@ async fn security_headers(request: Request<axum::body::Body>, next: Next) -> Res
     response
 }
 
-fn spawn_refresh_loop(daemon: BrainDrainDaemon<ServiceBackend>) {
+fn spawn_refresh_loop(state: AppState) {
     tokio::spawn(async move {
+        refresh_once(&state).await;
+        let mut interval = tokio::time::interval(REFRESH_INTERVAL);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        interval.tick().await;
         loop {
-            let _ = daemon.refresh_all().await;
-            tokio::time::sleep(REFRESH_INTERVAL).await;
+            interval.tick().await;
+            refresh_once(&state).await;
         }
     });
+}
+
+async fn refresh_once(state: &AppState) {
+    let _guard = state.refresh_lock.lock().await;
+    let _ = state.daemon.refresh_all().await;
+    for provider in state.daemon.status().await.providers {
+        if let Some(error) = provider.error {
+            eprintln!(
+                "BrainDrain refresh failed for {}: {error}",
+                provider.provider
+            );
+        }
+    }
+}
+
+fn origin_allowed(expected: Option<&str>, actual: Option<&HeaderValue>) -> bool {
+    match expected {
+        None => true,
+        Some(expected) => actual.and_then(|value| value.to_str().ok()) == Some(expected),
+    }
 }
 
 async fn shutdown_signal() {
@@ -331,7 +367,10 @@ fn provider_view(state: &CachedProviderState) -> ProviderView {
         email: snapshot
             .and_then(|snapshot| snapshot.identity.as_ref())
             .and_then(|identity| identity.email.clone()),
-        error: state.error.clone(),
+        error: state
+            .error
+            .as_ref()
+            .map(|_| "Refresh failed; last good data remains available.".to_owned()),
         windows,
         balances,
         reset_credits,
@@ -446,7 +485,7 @@ mod tests {
                     }),
                     updated_at: now,
                 }),
-                error: None,
+                error: Some("credential file /secret/provider.json is missing".to_owned()),
                 refreshing: false,
                 last_attempt_at: Some(now),
                 last_success_at: Some(now),
@@ -463,6 +502,8 @@ mod tests {
         assert!(html.contains("Weekly"));
         assert!(html.contains("quota"));
         assert!(!html.contains("Weekly <quota>"));
+        assert!(html.contains("Refresh failed; last good data remains available."));
+        assert!(!html.contains("/secret/provider.json"));
     }
 
     #[test]
@@ -495,5 +536,23 @@ mod tests {
         let rejected = redirect_to_provider(Some("https://example.com")).into_response();
         assert_eq!(rejected.status(), StatusCode::SEE_OTHER);
         assert_eq!(rejected.headers().get("location").expect("location"), "/");
+    }
+
+    #[test]
+    fn configured_origin_is_required_for_refresh() {
+        let origin = HeaderValue::from_static("https://braindrain.example.test");
+        assert!(origin_allowed(None, None));
+        assert!(origin_allowed(
+            Some("https://braindrain.example.test"),
+            Some(&origin)
+        ));
+        assert!(!origin_allowed(
+            Some("https://braindrain.example.test"),
+            None
+        ));
+        assert!(!origin_allowed(
+            Some("https://other.example.test"),
+            Some(&origin)
+        ));
     }
 }

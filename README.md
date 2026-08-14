@@ -21,7 +21,9 @@ deployments must put it behind an authentication proxy.
 
 On Unix, set `BRAINDRAIN_WEB_UNIX_SOCKET` to serve through a Unix-domain socket
 instead of TCP. The parent directory should be private to the service and its
-reverse proxy.
+reverse proxy. Set `BRAINDRAIN_WEB_ORIGIN` to the externally visible origin in
+reverse-proxy deployments; refresh POSTs without that exact `Origin` are
+rejected.
 
 ## Kimi Coding Plan
 
