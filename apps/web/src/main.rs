@@ -15,6 +15,7 @@ use axum::http::{HeaderMap, HeaderValue, Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
+use braindrain_core::format_relative_time;
 use braindrain_daemon::{BrainDrainDaemon, CachedProviderState, DaemonStatus, ServiceBackend};
 use serde::Deserialize;
 use time::OffsetDateTime;
@@ -262,6 +263,14 @@ async fn shutdown_signal() {
 }
 
 fn page_model(status: DaemonStatus, requested_provider: Option<&str>) -> IndexTemplate {
+    page_model_at(status, requested_provider, OffsetDateTime::now_utc())
+}
+
+fn page_model_at(
+    status: DaemonStatus,
+    requested_provider: Option<&str>,
+    now: OffsetDateTime,
+) -> IndexTemplate {
     let selected_id = requested_provider
         .filter(|requested| {
             status
@@ -288,7 +297,7 @@ fn page_model(status: DaemonStatus, requested_provider: Option<&str>) -> IndexTe
             .providers
             .iter()
             .find(|state| state.provider == id)
-            .map(provider_view)
+            .map(|state| provider_view(state, now))
     });
     let refreshing = status.providers.iter().any(|state| state.refreshing);
     let updated = status
@@ -308,7 +317,7 @@ fn page_model(status: DaemonStatus, requested_provider: Option<&str>) -> IndexTe
     }
 }
 
-fn provider_view(state: &CachedProviderState) -> ProviderView {
+fn provider_view(state: &CachedProviderState, now: OffsetDateTime) -> ProviderView {
     let snapshot = state.snapshot.as_ref();
     let usage = snapshot.map(|snapshot| &snapshot.usage);
     let windows = usage
@@ -320,7 +329,9 @@ fn provider_view(state: &CachedProviderState) -> ProviderView {
                     label: window.label.clone(),
                     percent: format!("{:.0}%", window.used_percent),
                     percent_value: window.used_percent.clamp(0.0, 100.0),
-                    reset: window.resets_at.map(format_relative),
+                    reset: window
+                        .resets_at
+                        .map(|timestamp| format_relative_time(timestamp, now)),
                     reset_exact: window.resets_at.map(format_exact),
                 })
                 .collect::<Vec<_>>()
@@ -409,23 +420,6 @@ fn format_updated(timestamp: OffsetDateTime) -> String {
         .unwrap_or_else(|_| "Updated".to_owned())
 }
 
-fn format_relative(timestamp: OffsetDateTime) -> String {
-    let seconds = (timestamp - OffsetDateTime::now_utc()).whole_seconds();
-    if seconds <= 0 {
-        return "now".to_owned();
-    }
-    if seconds < 60 {
-        return "in <1 min".to_owned();
-    }
-    if seconds < 3_600 {
-        return format!("in {} min", seconds / 60);
-    }
-    if seconds < 86_400 {
-        return format!("in {} hours", seconds / 3_600);
-    }
-    format!("in {} days", seconds / 86_400)
-}
-
 fn format_exact(timestamp: OffsetDateTime) -> String {
     timestamp
         .format(&Rfc3339)
@@ -492,7 +486,7 @@ mod tests {
             }],
         };
 
-        let html = page_model(status, Some("zai"))
+        let html = page_model_at(status, Some("zai"), now)
             .render()
             .expect("render page");
         assert!(html.contains("z.ai"));
@@ -502,8 +496,47 @@ mod tests {
         assert!(html.contains("Weekly"));
         assert!(html.contains("quota"));
         assert!(!html.contains("Weekly <quota>"));
+        assert!(html.contains("Resets in 1 hour"));
         assert!(html.contains("Refresh failed; last good data remains available."));
         assert!(!html.contains("/secret/provider.json"));
+    }
+
+    #[test]
+    fn page_keeps_remaining_hours_on_multi_day_resets() {
+        let now = OffsetDateTime::from_unix_timestamp(1_780_704_000).expect("valid now");
+        let status = DaemonStatus {
+            version: "test".to_owned(),
+            providers: vec![CachedProviderState {
+                provider: "claude".to_owned(),
+                snapshot: Some(ProviderSnapshot {
+                    provider: ProviderId::claude(),
+                    source: ProviderSource::Cli,
+                    usage: UsageSnapshot {
+                        windows: vec![RateWindow {
+                            id: "weekly".to_owned(),
+                            label: "Weekly".to_owned(),
+                            used_percent: 10.0,
+                            duration: None,
+                            resets_at: Some(now + Duration::from_secs(47 * 3_600)),
+                        }],
+                        balances: Vec::new(),
+                        reset_credits: Vec::new(),
+                    },
+                    identity: None,
+                    updated_at: now,
+                }),
+                error: None,
+                refreshing: false,
+                last_attempt_at: Some(now),
+                last_success_at: Some(now),
+            }],
+        };
+
+        let html = page_model_at(status, Some("claude"), now)
+            .render()
+            .expect("render page");
+        assert!(html.contains("Resets in 1 day 23 hours"));
+        assert!(!html.contains("Resets in 1 days"));
     }
 
     #[test]

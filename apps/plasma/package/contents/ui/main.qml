@@ -587,22 +587,37 @@ PlasmoidItem {
     return credit.id || "Reset credit";
   }
 
+  // Keep in sync with braindrain_core::RelativeTimeStyle::Short.
   function relativeTime(date) {
-    const diffSeconds = Math.round((date.getTime() - Date.now()) / 1000);
-    const absSeconds = Math.abs(diffSeconds);
-    let value = 0;
-    let unit = "m";
-    if (absSeconds < 3600) {
-      value = Math.max(1, Math.round(absSeconds / 60));
-      unit = "m";
-    } else if (absSeconds < 86400) {
-      value = Math.round(absSeconds / 3600);
-      unit = "h";
-    } else {
-      value = Math.round(absSeconds / 86400);
-      unit = "d";
+    const diffSeconds = Math.trunc((date.getTime() - Date.now()) / 1000);
+    return formatRelativeSeconds(diffSeconds);
+  }
+
+  function formatRelativeSeconds(seconds) {
+    if (seconds >= 0) {
+      return "in " + formatDurationShort(seconds);
     }
-    return diffSeconds >= 0 ? "in " + value + unit : value + unit + " ago";
+    const ago = Math.abs(seconds);
+    if (ago < 60) {
+      return "now";
+    }
+    return formatDurationShort(ago) + " ago";
+  }
+
+  function formatDurationShort(seconds) {
+    if (seconds < 60) {
+      return "<1m";
+    }
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    if (days > 0) {
+      return hours > 0 ? days + "d " + hours + "h" : days + "d";
+    }
+    if (hours > 0) {
+      return minutes > 0 ? hours + "h " + minutes + "m" : hours + "h";
+    }
+    return minutes + "m";
   }
 
   function footerText() {

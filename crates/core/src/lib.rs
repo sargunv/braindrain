@@ -9,6 +9,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use time::OffsetDateTime;
 
+mod relative_time;
+
+pub use relative_time::{RelativeTimeStyle, format_relative_time, format_relative_time_styled};
+
 pub type ProviderFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

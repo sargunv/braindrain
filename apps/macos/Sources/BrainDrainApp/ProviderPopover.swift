@@ -205,8 +205,8 @@ struct QuotaRow: View {
 
                 Spacer(minLength: 8)
 
-                if let resetDate {
-                    Text(relativeResetText(for: resetDate))
+                if let resetsAt = window.resetsAt, let resetDate {
+                    Text(formatRelativeTime(timestamp: resetsAt))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .help("Resets \(exactResetText(for: resetDate))")
@@ -334,13 +334,6 @@ private func parseRFC3339(_ value: String) -> Date? {
     let formatter = ISO8601DateFormatter()
     formatter.formatOptions = [.withInternetDateTime]
     return formatter.date(from: value)
-}
-
-private func relativeResetText(for date: Date) -> String {
-    let formatter = RelativeDateTimeFormatter()
-    formatter.unitsStyle = .full
-    formatter.dateTimeStyle = .numeric
-    return formatter.localizedString(for: date, relativeTo: Date())
 }
 
 private func exactResetText(for date: Date) -> String {
