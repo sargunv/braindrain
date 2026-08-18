@@ -8,8 +8,11 @@ license.workspace = true
 anyhow.workspace = true
 askama = "0.14.0"
 axum = "0.8.8"
-braindrain-core = { path = "../../crates/core" }
 braindrain-daemon = { path = "../../crates/daemon" }
+humantime.workspace = true
 serde.workspace = true
 time.workspace = true
 tokio = { workspace = true, features = ["net", "signal"] }
+
+[dev-dependencies]
+braindrain-core = { path = "../../crates/core" }

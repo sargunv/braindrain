@@ -2,7 +2,7 @@ use std::sync::LazyLock;
 
 use braindrain_core::{
     AccountIdentity, BalanceSnapshot, ProviderSnapshot, ProviderSource, RateWindow,
-    ResetCreditSnapshot, UsageSnapshot, format_relative_time as format_relative_time_core,
+    ResetCreditSnapshot, UsageSnapshot,
 };
 use braindrain_service::{self as service, ServiceError};
 use time::OffsetDateTime;
@@ -83,13 +83,6 @@ pub fn provider_ids() -> Vec<String> {
         .into_iter()
         .map(|provider| provider.as_str().to_owned())
         .collect()
-}
-
-#[uniffi::export]
-pub fn format_relative_time(timestamp: String) -> String {
-    OffsetDateTime::parse(&timestamp, &Rfc3339)
-        .map(|at| format_relative_time_core(at, OffsetDateTime::now_utc()))
-        .unwrap_or_default()
 }
 
 #[uniffi::export]
@@ -272,10 +265,5 @@ mod tests {
             ffi_snapshot.usage.reset_credits[0].expires_at,
             Some("2026-06-20T18:32:38Z".to_owned())
         );
-    }
-
-    #[test]
-    fn format_relative_time_returns_empty_for_invalid_timestamp() {
-        assert_eq!(format_relative_time("not-a-timestamp".to_owned()), "");
     }
 }

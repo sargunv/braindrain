@@ -15,7 +15,6 @@ use axum::http::{HeaderMap, HeaderValue, Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
-use braindrain_core::format_relative_time;
 use braindrain_daemon::{BrainDrainDaemon, CachedProviderState, DaemonStatus, ServiceBackend};
 use serde::Deserialize;
 use time::OffsetDateTime;
@@ -331,7 +330,7 @@ fn provider_view(state: &CachedProviderState, now: OffsetDateTime) -> ProviderVi
                     percent_value: window.used_percent.clamp(0.0, 100.0),
                     reset: window
                         .resets_at
-                        .map(|timestamp| format_relative_time(timestamp, now)),
+                        .map(|timestamp| format_relative(timestamp, now)),
                     reset_exact: window.resets_at.map(format_exact),
                 })
                 .collect::<Vec<_>>()
@@ -410,6 +409,23 @@ fn redirect_to_provider(provider: Option<&str>) -> Redirect {
         })
         .map(|provider| Redirect::to(&format!("/?provider={provider}")))
         .unwrap_or_else(|| Redirect::to("/"))
+}
+
+fn format_relative(timestamp: OffsetDateTime, now: OffsetDateTime) -> String {
+    let seconds = (timestamp - now).whole_seconds();
+    if let Ok(seconds) = u64::try_from(seconds) {
+        if seconds == 0 {
+            return "now".to_owned();
+        }
+        return format!(
+            "in {}",
+            humantime::format_duration(Duration::from_secs(seconds))
+        );
+    }
+    format!(
+        "{} ago",
+        humantime::format_duration(Duration::from_secs(seconds.unsigned_abs()))
+    )
 }
 
 fn format_updated(timestamp: OffsetDateTime) -> String {
@@ -496,7 +512,7 @@ mod tests {
         assert!(html.contains("Weekly"));
         assert!(html.contains("quota"));
         assert!(!html.contains("Weekly <quota>"));
-        assert!(html.contains("Resets in 1 hour"));
+        assert!(html.contains("Resets in 1h"));
         assert!(html.contains("Refresh failed; last good data remains available."));
         assert!(!html.contains("/secret/provider.json"));
     }
@@ -535,8 +551,7 @@ mod tests {
         let html = page_model_at(status, Some("claude"), now)
             .render()
             .expect("render page");
-        assert!(html.contains("Resets in 1 day 23 hours"));
-        assert!(!html.contains("Resets in 1 days"));
+        assert!(html.contains("Resets in 1day 23h"));
     }
 
     #[test]
@@ -587,5 +602,23 @@ mod tests {
             Some("https://other.example.test"),
             Some(&origin)
         ));
+    }
+
+    #[test]
+    fn format_relative_keeps_remaining_hours() {
+        let now = OffsetDateTime::from_unix_timestamp(1_780_704_000).expect("valid now");
+        assert_eq!(
+            format_relative(now + Duration::from_secs(47 * 3_600), now),
+            "in 1day 23h"
+        );
+        assert_eq!(
+            format_relative(now + Duration::from_secs(3_600), now),
+            "in 1h"
+        );
+        assert_eq!(format_relative(now, now), "now");
+        assert_eq!(
+            format_relative(now - Duration::from_secs(47 * 3_600), now),
+            "1day 23h ago"
+        );
     }
 }

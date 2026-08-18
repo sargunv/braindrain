@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls as QtControls
+import org.kde.coreaddons as KCoreAddons
 import org.kde.kirigami as Kirigami
 import org.kde.plasma.components as PlasmaComponents3
 import org.kde.plasma.core as PlasmaCore
@@ -587,37 +588,13 @@ PlasmoidItem {
     return credit.id || "Reset credit";
   }
 
-  // Keep in sync with braindrain_core::RelativeTimeStyle::Short.
   function relativeTime(date) {
-    const diffSeconds = Math.trunc((date.getTime() - Date.now()) / 1000);
-    return formatRelativeSeconds(diffSeconds);
-  }
-
-  function formatRelativeSeconds(seconds) {
-    if (seconds >= 0) {
-      return "in " + formatDurationShort(seconds);
-    }
-    const ago = Math.abs(seconds);
-    if (ago < 60) {
+    const diffMs = date.getTime() - Date.now();
+    if (Math.abs(diffMs) < 1000) {
       return "now";
     }
-    return formatDurationShort(ago) + " ago";
-  }
-
-  function formatDurationShort(seconds) {
-    if (seconds < 60) {
-      return "<1m";
-    }
-    const days = Math.floor(seconds / 86400);
-    const hours = Math.floor((seconds % 86400) / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    if (days > 0) {
-      return hours > 0 ? days + "d " + hours + "h" : days + "d";
-    }
-    if (hours > 0) {
-      return minutes > 0 ? hours + "h " + minutes + "m" : hours + "h";
-    }
-    return minutes + "m";
+    const formatted = KCoreAddons.Format.formatSpelloutDuration(Math.abs(diffMs));
+    return diffMs >= 0 ? "in " + formatted : formatted + " ago";
   }
 
   function footerText() {

@@ -205,8 +205,8 @@ struct QuotaRow: View {
 
                 Spacer(minLength: 8)
 
-                if let resetsAt = window.resetsAt, let resetDate {
-                    Text(formatRelativeTime(timestamp: resetsAt))
+                if let resetDate {
+                    Text(relativeResetText(for: resetDate))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .help("Resets \(exactResetText(for: resetDate))")
@@ -334,6 +334,25 @@ private func parseRFC3339(_ value: String) -> Date? {
     let formatter = ISO8601DateFormatter()
     formatter.formatOptions = [.withInternetDateTime]
     return formatter.date(from: value)
+}
+
+private func relativeResetText(for date: Date) -> String {
+    let interval = date.timeIntervalSinceNow
+    if abs(interval) < 60 {
+        return interval >= 0 ? "in <1 min" : "now"
+    }
+
+    let formatted = compactDurationText(from: interval)
+    return interval >= 0 ? "in \(formatted)" : "\(formatted) ago"
+}
+
+private func compactDurationText(from interval: TimeInterval) -> String {
+    let formatter = DateComponentsFormatter()
+    formatter.allowedUnits = [.day, .hour, .minute]
+    formatter.unitsStyle = .abbreviated
+    formatter.maximumUnitCount = 2
+    formatter.zeroFormattingBehavior = .dropAll
+    return formatter.string(from: abs(interval)) ?? "now"
 }
 
 private func exactResetText(for date: Date) -> String {

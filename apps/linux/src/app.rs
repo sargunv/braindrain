@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use adw::prelude::*;
-use braindrain_core::{BalanceSnapshot, RateWindow, ResetCreditSnapshot, format_relative_time};
+use braindrain_core::{BalanceSnapshot, RateWindow, ResetCreditSnapshot};
 use braindrain_daemon::{CachedProviderState, DaemonStatus};
 use relm4::{
     Component, ComponentController, ComponentParts, ComponentSender, Controller, MessageBroker,
@@ -322,7 +322,20 @@ fn format_time(t: time::OffsetDateTime) -> String {
 }
 
 fn relative_time(t: time::OffsetDateTime) -> String {
-    format_relative_time(t, time::OffsetDateTime::now_utc())
+    let seconds = (t - time::OffsetDateTime::now_utc()).whole_seconds();
+    if let Ok(seconds) = u64::try_from(seconds) {
+        if seconds == 0 {
+            return "now".to_owned();
+        }
+        return format!(
+            "in {}",
+            humantime::format_duration(Duration::from_secs(seconds))
+        );
+    }
+    format!(
+        "{} ago",
+        humantime::format_duration(Duration::from_secs(seconds.unsigned_abs()))
+    )
 }
 
 impl AppModel {
