@@ -322,22 +322,20 @@ fn format_time(t: time::OffsetDateTime) -> String {
 }
 
 fn relative_time(t: time::OffsetDateTime) -> String {
-    let now = time::OffsetDateTime::now_utc();
-    let diff = t - now;
-    if diff.is_positive() {
-        let secs = diff.whole_seconds();
-        if secs < 60 {
-            "in <1 min".to_owned()
-        } else if secs < 3600 {
-            format!("in {} min", secs / 60)
-        } else if secs < 86400 {
-            format!("in {} hours", secs / 3600)
-        } else {
-            format!("in {} days", secs / 86400)
+    let seconds = (t - time::OffsetDateTime::now_utc()).whole_seconds();
+    if let Ok(seconds) = u64::try_from(seconds) {
+        if seconds == 0 {
+            return "now".to_owned();
         }
-    } else {
-        "now".to_owned()
+        return format!(
+            "in {}",
+            humantime::format_duration(Duration::from_secs(seconds))
+        );
     }
+    format!(
+        "{} ago",
+        humantime::format_duration(Duration::from_secs(seconds.unsigned_abs()))
+    )
 }
 
 impl AppModel {

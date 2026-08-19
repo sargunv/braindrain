@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls as QtControls
+import org.kde.coreaddons as KCoreAddons
 import org.kde.kirigami as Kirigami
 import org.kde.plasma.components as PlasmaComponents3
 import org.kde.plasma.core as PlasmaCore
@@ -588,21 +589,12 @@ PlasmoidItem {
   }
 
   function relativeTime(date) {
-    const diffSeconds = Math.round((date.getTime() - Date.now()) / 1000);
-    const absSeconds = Math.abs(diffSeconds);
-    let value = 0;
-    let unit = "m";
-    if (absSeconds < 3600) {
-      value = Math.max(1, Math.round(absSeconds / 60));
-      unit = "m";
-    } else if (absSeconds < 86400) {
-      value = Math.round(absSeconds / 3600);
-      unit = "h";
-    } else {
-      value = Math.round(absSeconds / 86400);
-      unit = "d";
+    const diffMs = date.getTime() - Date.now();
+    if (Math.abs(diffMs) < 1000) {
+      return "now";
     }
-    return diffSeconds >= 0 ? "in " + value + unit : value + unit + " ago";
+    const formatted = KCoreAddons.Format.formatSpelloutDuration(Math.abs(diffMs));
+    return diffMs >= 0 ? "in " + formatted : formatted + " ago";
   }
 
   function footerText() {

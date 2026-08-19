@@ -337,10 +337,22 @@ private func parseRFC3339(_ value: String) -> Date? {
 }
 
 private func relativeResetText(for date: Date) -> String {
-    let formatter = RelativeDateTimeFormatter()
-    formatter.unitsStyle = .full
-    formatter.dateTimeStyle = .numeric
-    return formatter.localizedString(for: date, relativeTo: Date())
+    let interval = date.timeIntervalSinceNow
+    if abs(interval) < 60 {
+        return interval >= 0 ? "in <1 min" : "now"
+    }
+
+    let formatted = compactDurationText(from: interval)
+    return interval >= 0 ? "in \(formatted)" : "\(formatted) ago"
+}
+
+private func compactDurationText(from interval: TimeInterval) -> String {
+    let formatter = DateComponentsFormatter()
+    formatter.allowedUnits = [.day, .hour, .minute]
+    formatter.unitsStyle = .abbreviated
+    formatter.maximumUnitCount = 2
+    formatter.zeroFormattingBehavior = .dropAll
+    return formatter.string(from: abs(interval)) ?? "now"
 }
 
 private func exactResetText(for date: Date) -> String {

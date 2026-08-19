@@ -9,6 +9,7 @@ anyhow.workspace = true
 askama = "0.14.0"
 axum = "0.8.8"
 braindrain-daemon = { path = "../../crates/daemon" }
+humantime.workspace = true
 serde.workspace = true
 time.workspace = true
 tokio = { workspace = true, features = ["net", "signal"] }
