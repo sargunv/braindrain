@@ -22,7 +22,8 @@ let package = Package(
             ]
         ),
         .testTarget(
-            name: "BrainDrainAppTests"
+            name: "BrainDrainAppTests",
+            dependencies: ["BrainDrainApp"]
         ),
     ]
 )

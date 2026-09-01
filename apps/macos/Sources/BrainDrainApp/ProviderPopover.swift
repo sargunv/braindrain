@@ -71,16 +71,12 @@ struct ProviderPopover: View {
     @ViewBuilder
     private var providerPicker: some View {
         if !model.providers.isEmpty {
-            Picker("Provider", selection: selectedProviderBinding) {
-                ForEach(model.providers) { provider in
-                    Text(provider.title)
-                        .tag(provider.id as String?)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            ProviderPicker(
+                providers: model.providers.map {
+                    ProviderPickerOption(id: $0.id, title: $0.title)
+                },
+                selection: selectedProviderBinding
+            )
         }
     }
 
@@ -123,6 +119,33 @@ struct ProviderPopover: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+}
+
+struct ProviderPickerOption: Identifiable {
+    let id: String
+    let title: String
+}
+
+struct ProviderPicker: View {
+    let providers: [ProviderPickerOption]
+    @Binding var selection: String?
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            Picker("Provider", selection: $selection) {
+                ForEach(providers) { provider in
+                    Text(provider.title)
+                        .tag(provider.id as String?)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 14)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 10)
     }
 }
 
