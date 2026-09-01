@@ -9,8 +9,8 @@ use braindrain_providers_claude::{
 use braindrain_providers_cursor::{CURSOR_AUTH_TOKEN_ENV, CursorAccessTokenSource, CursorProvider};
 use braindrain_providers_cursor::{CURSOR_KEYCHAIN_ACCOUNT, CURSOR_KEYCHAIN_SERVICE};
 use braindrain_providers_kimi::{
-    KIMI_API_KEY_ENV, KIMI_CODE_BASE_URL_ENV, KIMI_SHARE_DIR_ENV, KimiAccessTokenSource,
-    KimiProvider,
+    KIMI_API_KEY_ENV, KIMI_CODE_BASE_URL_ENV, KIMI_CODE_HOME_ENV, KIMI_SHARE_DIR_ENV,
+    KimiAccessTokenSource, KimiProvider,
 };
 use braindrain_providers_openai::OpenAiProvider;
 use braindrain_providers_opencode_go::{
@@ -266,6 +266,7 @@ fn info_kimi() -> ProviderInfo {
         "credentials_path",
         provider.credentials_path().display().to_string(),
     );
+    info.push("env_code_home", KIMI_CODE_HOME_ENV);
     info.push("env_share_dir", KIMI_SHARE_DIR_ENV);
     info.push("env_api_key", KIMI_API_KEY_ENV);
     info.push("env_base_url", KIMI_CODE_BASE_URL_ENV);

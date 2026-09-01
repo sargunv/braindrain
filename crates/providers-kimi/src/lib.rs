@@ -25,6 +25,7 @@ pub const KIMI_CODE_BASE_URL: &str = "https://api.kimi.com/coding/v1";
 pub const KIMI_CODE_USAGE_PATH: &str = "usages";
 pub const KIMI_CODE_OAUTH_TOKEN_URL: &str = "https://auth.kimi.com/api/oauth/token";
 pub const KIMI_CODE_CLIENT_ID: &str = "17e5f671-d194-4dfb-9706-5516cb48c098";
+pub const KIMI_CODE_HOME_ENV: &str = "KIMI_CODE_HOME";
 pub const KIMI_SHARE_DIR_ENV: &str = "KIMI_SHARE_DIR";
 pub const KIMI_API_KEY_ENV: &str = "KIMI_API_KEY";
 pub const KIMI_CODE_BASE_URL_ENV: &str = "KIMI_CODE_BASE_URL";
@@ -307,15 +308,30 @@ pub struct KimiProviderConfig {
 }
 
 impl KimiProviderConfig {
+    fn default_share_dir(home: &Path) -> PathBuf {
+        let current = home.join(".kimi-code");
+        if current.join(KIMI_CODE_CREDENTIALS_PATH).is_file() {
+            return current;
+        }
+
+        let legacy = home.join(".kimi");
+        if legacy.join(KIMI_CODE_CREDENTIALS_PATH).is_file() {
+            return legacy;
+        }
+
+        current
+    }
+
     pub fn share_dir(&self) -> PathBuf {
         self.share_dir
             .clone()
+            .or_else(|| env::var_os(KIMI_CODE_HOME_ENV).map(PathBuf::from))
             .or_else(|| env::var_os(KIMI_SHARE_DIR_ENV).map(PathBuf::from))
             .unwrap_or_else(|| {
-                env::var_os("HOME")
+                let home = env::var_os("HOME")
                     .map(PathBuf::from)
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join(".kimi")
+                    .unwrap_or_else(|| PathBuf::from("."));
+                Self::default_share_dir(&home)
             })
     }
 
@@ -911,6 +927,34 @@ mod tests {
         assert_eq!(
             config.usage_url().as_str(),
             "https://api.kimi.com/coding/v1/usages"
+        );
+    }
+
+    #[test]
+    fn defaults_to_current_kimi_code_credentials() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let share_dir = tempdir.path().join(".kimi-code");
+        let path = share_dir.join(KIMI_CODE_CREDENTIALS_PATH);
+        fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        fs::write(path, "{}").expect("write credentials");
+
+        assert_eq!(
+            KimiProviderConfig::default_share_dir(tempdir.path()),
+            share_dir
+        );
+    }
+
+    #[test]
+    fn falls_back_to_legacy_kimi_cli_credentials() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let share_dir = tempdir.path().join(".kimi");
+        let path = share_dir.join(KIMI_CODE_CREDENTIALS_PATH);
+        fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        fs::write(path, "{}").expect("write credentials");
+
+        assert_eq!(
+            KimiProviderConfig::default_share_dir(tempdir.path()),
+            share_dir
         );
     }
 
