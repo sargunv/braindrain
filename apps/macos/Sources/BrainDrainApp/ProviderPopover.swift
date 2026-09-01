@@ -13,20 +13,7 @@ struct ProviderPopover: View {
 
             Divider()
 
-            VStack(alignment: .leading, spacing: 0) {
-                providerPicker
-
-                Divider()
-
-                ScrollView {
-                    if let provider = model.selectedProvider {
-                        ProviderSection(provider: provider)
-                    } else {
-                        EmptyProviderListView()
-                    }
-                }
-                .frame(minHeight: model.providers.isEmpty ? 56 : 260, maxHeight: 840)
-            }
+            content
 
             Divider()
 
@@ -48,8 +35,31 @@ struct ProviderPopover: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            Text("BrainDrain")
-                .font(.headline)
+            if let provider = model.selectedProvider {
+                Button {
+                    model.selectedProviderID = nil
+                } label: {
+                    Image(systemName: "chevron.left")
+                }
+                .buttonStyle(.borderless)
+                .keyboardShortcut(.cancelAction)
+                .accessibilityLabel("All providers")
+                .help("All providers")
+
+                Text(provider.title)
+                    .font(.headline)
+                    .lineLimit(1)
+
+                if let plan = provider.snapshot?.identity?.plan, !plan.isEmpty {
+                    Text(plan)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            } else {
+                Text("BrainDrain")
+                    .font(.headline)
+            }
 
             Spacer()
 
@@ -68,23 +78,30 @@ struct ProviderPopover: View {
         .padding(.vertical, 10)
     }
 
-    @ViewBuilder
-    private var providerPicker: some View {
-        if !model.providers.isEmpty {
-            ProviderPicker(
-                providers: model.providers.map {
-                    ProviderPickerOption(id: $0.id, title: $0.title)
-                },
-                selection: selectedProviderBinding
-            )
+    private var content: some View {
+        Group {
+            if let provider = model.selectedProvider {
+                ScrollView {
+                    ProviderSection(provider: provider, showsHeader: false)
+                }
+            } else {
+                ProviderOverview(
+                    providers: model.providers,
+                    onSelect: { providerID in
+                        model.selectedProviderID = providerID
+                    }
+                )
+            }
         }
+        .frame(height: providerContentHeight)
     }
 
-    private var selectedProviderBinding: Binding<String?> {
-        Binding(
-            get: { model.selectedProviderID },
-            set: { model.selectedProviderID = $0 }
-        )
+    private var providerContentHeight: CGFloat {
+        guard !model.providers.isEmpty else {
+            return 56
+        }
+
+        return min(max(CGFloat(model.providers.count) * 66, 260), 480)
     }
 
     private var footer: some View {
@@ -122,49 +139,196 @@ struct ProviderPopover: View {
     }
 }
 
-struct ProviderPickerOption: Identifiable {
-    let id: String
-    let title: String
-}
-
-struct ProviderPicker: View {
-    let providers: [ProviderPickerOption]
-    @Binding var selection: String?
+struct ProviderOverview: View {
+    let providers: [ProviderViewState]
+    let onSelect: (String) -> Void
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            Picker("Provider", selection: $selection) {
-                ForEach(providers) { provider in
-                    Text(provider.title)
-                        .tag(provider.id as String?)
+        if providers.isEmpty {
+            EmptyProviderListView()
+        } else {
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(providers.enumerated()), id: \.element.id) { index, provider in
+                        ProviderOverviewRow(provider: provider) {
+                            onSelect(provider.id)
+                        }
+
+                        if index < providers.count - 1 {
+                            Divider()
+                                .padding(.leading, 14)
+                        }
+                    }
                 }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize(horizontal: true, vertical: false)
-            .padding(.horizontal, 14)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 10)
+    }
+}
+
+struct ProviderOverviewRow: View {
+    let provider: ProviderViewState
+    let action: () -> Void
+    @State private var isHovered = false
+
+    private var summary: ProviderOverviewSummary {
+        ProviderOverviewSummary(provider: provider)
+    }
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline, spacing: 7) {
+                    Text(provider.title)
+                        .fontWeight(.semibold)
+                        .lineLimit(1)
+
+                    if let plan = provider.snapshot?.identity?.plan, !plan.isEmpty {
+                        Text(plan)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    if let valueText = summary.valueText {
+                        Text(valueText)
+                            .font(.caption)
+                            .monospacedDigit()
+                            .foregroundStyle(summary.hasError ? Color.orange : Color.secondary)
+                            .lineLimit(1)
+                    }
+
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
+                Text(summary.detailText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
+                if let progress = summary.progress {
+                    ProgressView(value: progress)
+                        .progressViewStyle(.linear)
+                        .tint(usageProgressTint(for: progress))
+                        .controlSize(.small)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(isHovered ? Color.primary.opacity(0.055) : Color.clear)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .accessibilityLabel(provider.title)
+        .accessibilityValue(summary.accessibilityValue)
+        .accessibilityHint("Shows provider details")
+    }
+}
+
+struct ProviderOverviewSummary {
+    let valueText: String?
+    let detailText: String
+    let progress: Double?
+    let hasError: Bool
+
+    init(provider: ProviderViewState, now: Date = Date()) {
+        if provider.errorMessage != nil {
+            valueText = "Error"
+            detailText = "Couldn’t refresh usage"
+            progress = nil
+            hasError = true
+            return
+        }
+
+        guard let usage = provider.snapshot?.usage else {
+            valueText = nil
+            detailText = "Waiting for usage"
+            progress = nil
+            hasError = false
+            return
+        }
+
+        if let window = usage.windows.max(by: { $0.usedPercent < $1.usedPercent }) {
+            valueText = Self.percentText(window.usedPercent)
+            if let resetsAt = window.resetsAt,
+               let resetDate = parseRFC3339(resetsAt)
+            {
+                detailText = "Highest: \(window.label) · resets \(relativeResetText(for: resetDate, relativeTo: now))"
+            } else {
+                detailText = "Highest: \(window.label)"
+            }
+            progress = Self.clampedProgress(window.usedPercent)
+            hasError = false
+            return
+        }
+
+        if let balance = usage.balances.first {
+            valueText = "\(balance.remaining.formatted(.number.precision(.fractionLength(0 ... 2)))) \(balance.unit)"
+            detailText = balance.label
+            progress = nil
+            hasError = false
+            return
+        }
+
+        if !usage.resetCredits.isEmpty {
+            let count = usage.resetCredits.count
+            valueText = "\(count) \(count == 1 ? "credit" : "credits")"
+            detailText = "Quota reset credits"
+            progress = nil
+            hasError = false
+            return
+        }
+
+        valueText = nil
+        detailText = "No usage reported"
+        progress = nil
+        hasError = false
+    }
+
+    var accessibilityValue: String {
+        [valueText, detailText]
+            .compactMap(\.self)
+            .joined(separator: ", ")
+    }
+
+    private static func percentText(_ usedPercent: Double) -> String {
+        guard usedPercent.isFinite else {
+            return "—"
+        }
+        return "\(Int(usedPercent.rounded()))%"
+    }
+
+    private static func clampedProgress(_ usedPercent: Double) -> Double {
+        guard usedPercent.isFinite else {
+            return 0
+        }
+        return min(max(usedPercent / 100, 0), 1)
     }
 }
 
 struct ProviderSection: View {
     let provider: ProviderViewState
+    var showsHeader = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(provider.title)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
+            if showsHeader {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(provider.title)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
 
-                Spacer(minLength: 8)
+                    Spacer(minLength: 8)
 
-                if let plan = provider.snapshot?.identity?.plan, !plan.isEmpty {
-                    Text(plan)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    if let plan = provider.snapshot?.identity?.plan, !plan.isEmpty {
+                        Text(plan)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
 
@@ -188,7 +352,7 @@ struct UsageDetailsView: View {
     let usage: FfiUsageSnapshot
 
     var body: some View {
-        if usage.windows.isEmpty && usage.balances.isEmpty && usage.resetCredits.isEmpty {
+        if usage.windows.isEmpty, usage.balances.isEmpty, usage.resetCredits.isEmpty {
             EmptyUsageView()
         } else {
             VStack(alignment: .leading, spacing: 8) {
@@ -243,7 +407,7 @@ struct QuotaRow: View {
 
             ProgressView(value: progress)
                 .progressViewStyle(.linear)
-                .tint(.primary)
+                .tint(usageProgressTint(for: progress))
         }
     }
 
@@ -264,6 +428,16 @@ struct QuotaRow: View {
 
         return date
     }
+}
+
+private func usageProgressTint(for progress: Double) -> Color {
+    if progress >= 0.9 {
+        return .red
+    }
+    if progress >= 0.75 {
+        return .orange
+    }
+    return .accentColor
 }
 
 struct BalanceRow: View {
@@ -359,8 +533,8 @@ private func parseRFC3339(_ value: String) -> Date? {
     return formatter.date(from: value)
 }
 
-private func relativeResetText(for date: Date) -> String {
-    let interval = date.timeIntervalSinceNow
+private func relativeResetText(for date: Date, relativeTo now: Date = Date()) -> String {
+    let interval = date.timeIntervalSince(now)
     if abs(interval) < 60 {
         return interval >= 0 ? "in <1 min" : "now"
     }

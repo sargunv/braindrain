@@ -23,7 +23,10 @@ let package = Package(
         ),
         .testTarget(
             name: "BrainDrainAppTests",
-            dependencies: ["BrainDrainApp"]
+            dependencies: [
+                "BrainDrainApp",
+                .product(name: "BrainDrainBindings", package: "bindings-uniffi"),
+            ]
         ),
     ]
 )

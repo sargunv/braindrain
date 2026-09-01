@@ -11,17 +11,15 @@ final class ProviderListModel {
 
     init(providerIDs: [String] = providerIds()) {
         providers = providerIDs.map { ProviderViewState(id: $0) }
-        selectedProviderID = providerIDs.first
+        selectedProviderID = nil
     }
 
     var selectedProvider: ProviderViewState? {
-        if let selectedProviderID,
-           let provider = providers.first(where: { $0.id == selectedProviderID })
-        {
-            return provider
+        guard let selectedProviderID else {
+            return nil
         }
 
-        return providers.first
+        return providers.first(where: { $0.id == selectedProviderID })
     }
 
     func refreshIfStale(minimumAge: TimeInterval) async {
