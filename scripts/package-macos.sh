@@ -203,6 +203,7 @@ zip_app() {
 case "${1:-package}" in
     package)
         build_app
+        sign_app
         zip_app
         ;;
     release)

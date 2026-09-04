@@ -88,7 +88,7 @@ depends = ["ffi-swift"]
 run = "CLANG_MODULE_CACHE_PATH=build/macos/debug/clang-module-cache swift run --package-path apps/macos --scratch-path build/macos/debug/swiftpm --cache-path build/macos/debug/swiftpm-cache --config-path build/macos/debug/swiftpm-config --security-path build/macos/debug/swiftpm-security --disable-sandbox BrainDrain"
 
 [tasks.macos-package]
-description = "Build apps/macos into an unsigned release zip"
+description = "Build and Developer ID sign apps/macos without notarizing"
 run = "scripts/package-macos.sh package"
 
 [tasks.macos-release]
