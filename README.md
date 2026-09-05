@@ -65,8 +65,12 @@ braindrain check google
 BrainDrain automatically discovers credentials saved by the Antigravity CLI in
 the system keyring (service `gemini`, account `antigravity`). It automatically
 refreshes expiring OAuth access tokens, retrieves account details and plan tier
-via Google's Code Assist endpoints, and tracks quota summary rate windows and AI
-credit balances (e.g. Prompt Credits and Flow Credits).
+via Antigravity's `daily-cloudcode-pa.googleapis.com` backend, and tracks the
+weekly and five-hour quota windows for Gemini and Claude/GPT models. The generic
+`cloudcode-pa.googleapis.com` backend can return unused buckets even when the
+Antigravity quota is exhausted. Refreshed tokens are cached in-process without
+writing to the CLI's keyring. Missing or invalid quota measurements are omitted;
+a response with no usable measurements is reported as an error.
 
 You can also provide or override credentials via environment variables:
 `GOOGLE_AI_ACCESS_TOKEN` (or `GEMINI_ACCESS_TOKEN`), `GOOGLE_AI_REFRESH_TOKEN`,

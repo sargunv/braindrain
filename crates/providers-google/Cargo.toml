@@ -7,7 +7,6 @@ license.workspace = true
 [dependencies]
 base64 = { workspace = true }
 braindrain-core = { path = "../core" }
-fs4 = { workspace = true }
 keyring = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }

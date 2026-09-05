@@ -111,10 +111,12 @@ pub async fn check_provider(provider: &str) -> Result<ProviderSnapshot, ServiceE
             .refresh(context)
             .await
             .map_err(ServiceError::from),
-        ProviderId::GOOGLE => GoogleProvider::default()
-            .refresh(context)
-            .await
-            .map_err(ServiceError::from),
+        ProviderId::GOOGLE => {
+            // Keep the HTTP client and refreshed OAuth token across daemon polls.
+            static GOOGLE: std::sync::LazyLock<GoogleProvider> =
+                std::sync::LazyLock::new(GoogleProvider::default);
+            GOOGLE.refresh(context).await.map_err(ServiceError::from)
+        }
         provider => Err(ServiceError::UnsupportedProvider {
             provider: provider.to_owned(),
         }),

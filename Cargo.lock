@@ -554,7 +554,6 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "braindrain-core",
- "fs4",
  "keyring",
  "reqwest",
  "serde",

@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 use std::env;
-use std::fs::{self, OpenOptions};
-use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -9,14 +8,14 @@ use braindrain_core::{
     AccountIdentity, BalanceSnapshot, Provider, ProviderError, ProviderFuture, ProviderId,
     ProviderSnapshot, ProviderSource, RateWindow, RefreshContext, UsageSnapshot,
 };
-use fs4::FileExt;
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 use time::OffsetDateTime;
+use tokio::sync::Mutex;
 use url::Url;
 
-pub const GOOGLE_API_BASE_URL: &str = "https://cloudcode-pa.googleapis.com";
+pub const GOOGLE_API_BASE_URL: &str = "https://daily-cloudcode-pa.googleapis.com";
 pub const GOOGLE_OAUTH_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 pub const GOOGLE_USERINFO_URL: &str = "https://www.googleapis.com/oauth2/v3/userinfo";
 // Public desktop OAuth client credentials used by Antigravity CLI.
@@ -70,66 +69,26 @@ pub const GOOGLE_AI_TOKEN_URL_ENV: &str = "GOOGLE_AI_TOKEN_URL";
 
 const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-const LOCK_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(5);
-const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(50);
-
-struct FileLock(std::fs::File);
-
-impl FileLock {
-    async fn acquire(path: &Path) -> Result<Self, GoogleProviderError> {
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(path)
-            .map_err(|e| GoogleProviderError::LockFailed(e.to_string()))?;
-
-        let deadline = tokio::time::Instant::now() + LOCK_ACQUIRE_TIMEOUT;
-        loop {
-            match <std::fs::File as FileExt>::try_lock(&file) {
-                Ok(()) => return Ok(Self(file)),
-                Err(fs4::TryLockError::WouldBlock) if tokio::time::Instant::now() < deadline => {
-                    tokio::time::sleep(LOCK_RETRY_INTERVAL).await;
-                }
-                Err(fs4::TryLockError::WouldBlock) => {
-                    return Err(GoogleProviderError::LockFailed(
-                        "timed out acquiring refresh lock".to_owned(),
-                    ));
-                }
-                Err(fs4::TryLockError::Error(e)) => {
-                    return Err(GoogleProviderError::LockFailed(e.to_string()));
-                }
-            }
-        }
-    }
-}
-
-impl Drop for FileLock {
-    fn drop(&mut self) {
-        let _ = <std::fs::File as FileExt>::unlock(&self.0);
-    }
-}
-
-fn refresh_lock_path() -> PathBuf {
-    braindrain_core::AppPaths::discover()
-        .map(|p| p.cache_dir.join("google-refresh.lock"))
-        .unwrap_or_else(|| env::temp_dir().join("braindrain-google-refresh.lock"))
+// Credentials stay read-only in the CLI's keyring. Cache refreshed tokens only
+// while the discovered credentials still match, so account changes take effect.
+#[derive(Debug)]
+struct RefreshedToken {
+    original: GoogleAccessToken,
+    refreshed: GoogleAccessToken,
 }
 
 #[derive(Debug, Clone)]
 pub struct GoogleProvider {
     config: GoogleProviderConfig,
     client: reqwest::Client,
+    refreshed_token: Arc<Mutex<Option<RefreshedToken>>>,
 }
 
 impl GoogleProvider {
     pub fn new(config: GoogleProviderConfig) -> Self {
         Self {
             config,
+            refreshed_token: Arc::new(Mutex::new(None)),
             client: reqwest::Client::builder()
                 .user_agent(default_user_agent())
                 .connect_timeout(HTTP_CONNECT_TIMEOUT)
@@ -144,33 +103,43 @@ impl GoogleProvider {
     }
 
     pub async fn resolve_access_token(&self) -> Result<GoogleAccessToken, GoogleProviderError> {
-        let mut token = self.config.auth_token_async().await?;
+        let mut cached = self.refreshed_token.lock().await;
+        let original = self.config.auth_token_async().await?;
         let now = OffsetDateTime::now_utc();
-
-        if token.is_expired(now) && self.config.refresh_enabled {
-            if let Some(refresh_token) = &token.refresh_token {
-                let lock_path = refresh_lock_path();
-                let _lock = FileLock::acquire(&lock_path).await?;
-
-                // Under the lock, re-read credentials in case another process refreshed them
-                if let Ok(latest) = self.config.auth_token_async().await
-                    && !latest.is_expired(now)
-                {
-                    return Ok(latest);
-                }
-
-                let refreshed = self.refresh_oauth_token(refresh_token).await?;
-                token.value = refreshed.access_token.clone();
-                let expires_in_secs = refreshed.expires_in.unwrap_or(3600);
-                token.expiry = Some(now + Duration::from_secs(expires_in_secs));
-                if let Some(new_refresh) = refreshed.refresh_token {
-                    token.refresh_token = Some(new_refresh);
-                }
-            } else if token.expiry.is_some() {
-                return Err(GoogleProviderError::ExpiredTokenWithoutRefresh);
-            }
+        if let Some(entry) = cached.as_ref()
+            && entry.original == original
+            && !entry.refreshed.is_expired(now)
+        {
+            return Ok(entry.refreshed.clone());
         }
 
+        let mut token = cached
+            .as_ref()
+            .filter(|entry| entry.original == original)
+            .map(|entry| entry.refreshed.clone())
+            .unwrap_or_else(|| original.clone());
+        if token.is_expired(now) && self.config.refresh_enabled {
+            let refresh_token = token
+                .refresh_token
+                .as_deref()
+                .ok_or(GoogleProviderError::ExpiredTokenWithoutRefresh)?;
+            let refreshed = self.refresh_oauth_token(refresh_token).await?;
+            token.value = refreshed.access_token;
+            token.expiry = i64::try_from(refreshed.expires_in.unwrap_or(3600))
+                .ok()
+                .map(time::Duration::seconds)
+                .and_then(|d| OffsetDateTime::now_utc().checked_add(d));
+            if token.expiry.is_none() {
+                return Err(GoogleProviderError::InvalidTokenExpiry);
+            }
+            if let Some(new_refresh) = refreshed.refresh_token {
+                token.refresh_token = Some(new_refresh);
+            }
+            *cached = Some(RefreshedToken {
+                original,
+                refreshed: token.clone(),
+            });
+        }
         Ok(token)
     }
 
@@ -298,7 +267,7 @@ impl GoogleProvider {
         &self,
         token: &str,
         project: Option<&str>,
-    ) -> Result<Option<RetrieveUserQuotaSummaryResponse>, GoogleProviderError> {
+    ) -> Result<RetrieveUserQuotaSummaryResponse, GoogleProviderError> {
         let url = self
             .config
             .api_base_url
@@ -321,13 +290,7 @@ impl GoogleProvider {
         let status = response.status();
         let body = response.bytes().await.map_err(GoogleProviderError::Http)?;
 
-        // Free tier, unprovisioned project, or license required returns HTTP 403.
-        // If the user is authenticated, we treat this gracefully as no active quota windows.
-        if status == reqwest::StatusCode::FORBIDDEN {
-            return Ok(None);
-        }
-
-        if status == reqwest::StatusCode::UNAUTHORIZED {
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(GoogleProviderError::Unauthorized {
                 status: status.as_u16(),
                 body: body_preview(&body),
@@ -349,7 +312,7 @@ impl GoogleProvider {
 
         let parsed: RetrieveUserQuotaSummaryResponse =
             serde_json::from_slice(&body).map_err(GoogleProviderError::Decode)?;
-        Ok(Some(parsed))
+        Ok(parsed)
     }
 
     fn auth_headers(&self, token: &str) -> Result<HeaderMap, GoogleProviderError> {
@@ -387,59 +350,34 @@ impl Provider for GoogleProvider {
                 .await
                 .map_err(ProviderError::from)?;
 
-            let load_resp = self.fetch_load_code_assist(&token.value).await;
+            let lca = self
+                .fetch_load_code_assist(&token.value)
+                .await
+                .map_err(ProviderError::from)?;
             let user_info_resp = self.fetch_user_info(&token.value).await.ok();
 
             let email = user_info_resp.and_then(|u| u.email);
-
-            let (plan, project_id, lca_credits) = match load_resp {
-                Ok(lca) => {
-                    let plan_name = lca.plan_name();
-                    let project = self
-                        .config
-                        .project_id
-                        .clone()
-                        .or_else(|| lca.cloudaicompanion_project.clone())
-                        .filter(|s| !s.trim().is_empty());
-                    let credits = lca.balances();
-                    (Some(plan_name), project, credits)
-                }
-                Err(err) => {
-                    if matches!(err, GoogleProviderError::Unauthorized { .. }) {
-                        return Err(ProviderError::from(err));
-                    }
-                    (
-                        None,
-                        self.config
-                            .project_id
-                            .clone()
-                            .filter(|s| !s.trim().is_empty()),
-                        Vec::new(),
-                    )
-                }
-            };
+            let plan = Some(lca.plan_name());
+            let project_id = self
+                .config
+                .project_id
+                .clone()
+                .or_else(|| lca.cloudaicompanion_project.clone())
+                .filter(|s| !s.trim().is_empty());
+            let lca_credits = lca.balances();
 
             let quota_summary = self
                 .fetch_user_quota_summary(&token.value, project_id.as_deref())
                 .await
                 .map_err(ProviderError::from)?;
 
-            let usage = match quota_summary {
-                Some(qs) => {
-                    let mut u = qs.usage_snapshot();
-                    for c in lca_credits {
-                        if !u.balances.iter().any(|b| b.id == c.id) {
-                            u.balances.push(c);
-                        }
-                    }
-                    u
-                }
-                None => {
-                    let mut u = UsageSnapshot::empty();
-                    u.balances = lca_credits;
-                    u
-                }
-            };
+            let mut usage = quota_summary.usage_snapshot();
+            if usage.windows.is_empty() {
+                return Err(ProviderError::Parse(
+                    "Google returned no usable quota measurements".to_owned(),
+                ));
+            }
+            usage.balances = lca_credits;
 
             let identity = if email.is_some() || plan.is_some() {
                 Some(AccountIdentity { email, plan })
@@ -607,8 +545,8 @@ pub enum GoogleProviderError {
     RefreshTokenFailed { status: u16, body: String },
     #[error("could not read credentials from system keyring: {0}")]
     Keyring(String),
-    #[error("cross-process lock failed: {0}")]
-    LockFailed(String),
+    #[error("Google returned an invalid OAuth token expiry")]
+    InvalidTokenExpiry,
     #[error("invalid URL: {0}")]
     Url(url::ParseError),
     #[error("HTTP request failed: {0}")]
@@ -632,13 +570,13 @@ impl From<GoogleProviderError> for ProviderError {
                 ProviderError::NotConfigured(error.to_string())
             }
             GoogleProviderError::ExpiredTokenWithoutRefresh
+            | GoogleProviderError::InvalidTokenExpiry
             | GoogleProviderError::RefreshTokenFailed { .. }
             | GoogleProviderError::Unauthorized { .. } => {
                 ProviderError::Authentication(error.to_string())
             }
             GoogleProviderError::Decode(_) => ProviderError::Parse(error.to_string()),
-            GoogleProviderError::LockFailed(_)
-            | GoogleProviderError::Url(_)
+            GoogleProviderError::Url(_)
             | GoogleProviderError::Http(_)
             | GoogleProviderError::RateLimited { .. }
             | GoogleProviderError::ApiStatus { .. }
@@ -803,6 +741,15 @@ pub struct LoadCodeAssistResponse {
 impl LoadCodeAssistResponse {
     pub fn plan_name(&self) -> String {
         if let Some(name) = self
+            .paid_tier
+            .as_ref()
+            .and_then(|t| t.name.as_deref().or(t.id.as_deref()))
+            .filter(|s| !s.trim().is_empty())
+        {
+            return name.to_owned();
+        }
+
+        if let Some(name) = self
             .current_tier
             .as_ref()
             .and_then(|t| t.name.as_deref().or(t.id.as_deref()))
@@ -811,26 +758,8 @@ impl LoadCodeAssistResponse {
             return name.to_owned();
         }
 
-        if let Some(name) = self
-            .allowed_tiers
-            .first()
-            .and_then(|t| t.name.as_deref().or(t.id.as_deref()))
-            .filter(|s| !s.trim().is_empty())
-        {
-            return name.to_owned();
-        }
-
         if let Some(tier) = self.g1_tier.as_deref().filter(|s| !s.trim().is_empty()) {
             return tier.to_owned();
-        }
-
-        if let Some(name) = self
-            .paid_tier
-            .as_ref()
-            .and_then(|t| t.name.as_deref().or(t.id.as_deref()))
-            .filter(|s| !s.trim().is_empty())
-        {
-            return name.to_owned();
         }
 
         "Google AI".to_owned()
@@ -928,19 +857,22 @@ fn parse_bucket(
     bucket: &QuotaSummaryBucket,
     seen_ids: &mut HashSet<String>,
 ) -> Option<RateWindow> {
+    if bucket.disabled == Some(true) {
+        return None;
+    }
+    let fraction = bucket.remaining_fraction?;
+    if !fraction.is_finite() || !(0.0..=1.0).contains(&fraction) {
+        return None;
+    }
     let id = bucket
         .bucket_id
-        .clone()
-        .unwrap_or_else(|| "quota".to_owned());
-
+        .as_ref()
+        .filter(|id| !id.is_empty())?
+        .clone();
     if !seen_ids.insert(id.clone()) {
         return None;
     }
-
-    let used_percent = match bucket.remaining_fraction {
-        Some(fraction) if fraction.is_finite() => ((1.0 - fraction) * 100.0).clamp(0.0, 100.0),
-        _ => 0.0,
-    };
+    let used_percent = (1.0 - fraction) * 100.0;
 
     let duration = bucket.window.as_deref().and_then(parse_duration_string);
     let resets_at = bucket
@@ -1090,7 +1022,7 @@ pub fn parse_duration_string(s: &str) -> Option<Duration> {
 
     let parse_positive_secs = |val: &str, multiplier: f64| -> Option<Duration> {
         let n: f64 = val.parse().ok()?;
-        (n.is_finite() && n >= 0.0).then(|| Duration::from_secs_f64(n * multiplier))
+        Duration::try_from_secs_f64(n * multiplier).ok()
     };
 
     const UNITS: [(&str, f64); 5] = [
@@ -1130,6 +1062,56 @@ mod tests {
     use super::*;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[test]
+    fn uses_antigravity_quota_backend() {
+        // The generic cloudcode host returns untouched buckets for this same
+        // account even when the daily host reports an exhausted session.
+        assert_eq!(
+            GOOGLE_API_BASE_URL,
+            "https://daily-cloudcode-pa.googleapis.com"
+        );
+    }
+
+    #[test]
+    fn paid_subscription_takes_precedence_over_code_assist_tier() {
+        let response: LoadCodeAssistResponse = serde_json::from_value(serde_json::json!({
+            "currentTier": {"id": "free-tier", "name": "Antigravity"},
+            "allowedTiers": [{"id": "standard-tier", "name": "Antigravity"}],
+            "paidTier": {"id": "g1-pro-tier", "name": "Google AI Pro"}
+        }))
+        .unwrap();
+        assert_eq!(response.plan_name(), "Google AI Pro");
+    }
+
+    #[test]
+    fn unknown_invalid_and_disabled_buckets_do_not_become_zero_usage() {
+        let response: RetrieveUserQuotaSummaryResponse =
+            serde_json::from_value(serde_json::json!({
+                "buckets": [
+                    {"bucketId": "missing"},
+                    {"bucketId": "null", "remainingFraction": null},
+                    {"bucketId": "negative", "remainingFraction": -0.1},
+                    {"bucketId": "too-large", "remainingFraction": 1.1},
+                    {"bucketId": "disabled", "remainingFraction": 1, "disabled": true},
+                    {"remainingFraction": 1},
+                    {"bucketId": "exhausted", "remainingFraction": 0},
+                    {"bucketId": "unused", "remainingFraction": 1}
+                ]
+            }))
+            .unwrap();
+        let usage = response.usage_snapshot();
+        assert_eq!(usage.windows.len(), 2);
+        assert_eq!(usage.windows[0].used_percent, 100.0);
+        assert_eq!(usage.windows[1].used_percent, 0.0);
+    }
+
+    #[test]
+    fn duration_overflow_does_not_panic() {
+        for value in ["1e300w", "inf", "NaN", "-1h"] {
+            assert_eq!(parse_duration_string(value), None);
+        }
+    }
 
     #[test]
     fn body_preview_is_safe_at_multibyte_boundary() {
@@ -1372,7 +1354,7 @@ mod tests {
         let usage = resp.usage_snapshot();
         assert_eq!(usage.windows.len(), 1);
         assert_eq!(usage.windows[0].id, "dup-id");
-        assert_eq!(usage.windows[0].used_percent, 0.0); // NAN mapped to 0.0
+        assert_eq!(usage.windows[0].used_percent, 50.0);
     }
 
     #[tokio::test]
@@ -1418,17 +1400,10 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/v1internal:retrieveUserQuotaSummary"))
             .and(header("authorization", "Bearer ya29.refreshed-token"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "buckets": [
-                    {
-                        "bucketId": "chat-quota",
-                        "displayName": "Chat Quota",
-                        "window": "1h",
-                        "remainingFraction": 0.4,
-                        "resetTime": "2026-09-05T04:00:00Z"
-                    }
-                ]
-            })))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                include_str!("../tests/fixtures/exhausted-quota.json"),
+                "application/json",
+            ))
             .expect(1)
             .mount(&mock_server)
             .await;
@@ -1462,16 +1437,33 @@ mod tests {
                 plan: Some("Gemini Code Assist".to_owned()),
             })
         );
-        assert_eq!(snapshot.usage.windows.len(), 1);
-        let window = &snapshot.usage.windows[0];
-        assert_eq!(window.id, "chat-quota");
-        assert_eq!(window.label, "Chat Quota");
-        assert_eq!(window.duration, Some(Duration::from_secs(3600)));
-        assert!((window.used_percent - 60.0).abs() < 0.001);
+        assert_eq!(snapshot.usage.windows.len(), 4);
+        let weekly = &snapshot.usage.windows[0];
+        assert_eq!(weekly.id, "gemini-weekly");
+        assert!((weekly.used_percent - 17.29267).abs() < 0.0001);
+        let session = &snapshot.usage.windows[1];
+        assert_eq!(session.id, "gemini-5h");
+        assert_eq!(session.label, "Gemini Models (5h)");
+        assert_eq!(session.duration, Some(Duration::from_secs(5 * 3600)));
+        assert_eq!(session.used_percent, 100.0);
+        assert_eq!(
+            session.resets_at,
+            parse_rfc3339_timestamp("2026-09-05T06:40:29Z")
+        );
+
+        // Repeated and concurrent refreshes reuse the in-process token. The
+        // mock token endpoint expects exactly one request across provider clones.
+        let clone = provider.clone();
+        let (first, second) = tokio::join!(
+            provider.resolve_access_token(),
+            clone.resolve_access_token()
+        );
+        assert_eq!(first.unwrap().value, "ya29.refreshed-token");
+        assert_eq!(second.unwrap().value, "ya29.refreshed-token");
     }
 
     #[tokio::test]
-    async fn provider_handles_subscription_required_gracefully() {
+    async fn provider_reports_subscription_required_as_an_error() {
         let mock_server = MockServer::start().await;
 
         Mock::given(method("POST"))
@@ -1527,19 +1519,11 @@ mod tests {
         };
 
         let provider = GoogleProvider::new(config);
-        let snapshot = provider
+        let error = provider
             .refresh(RefreshContext::default())
             .await
-            .expect("refresh succeeds");
-        assert_eq!(
-            snapshot.identity,
-            Some(AccountIdentity {
-                email: Some("individual@example.com".to_owned()),
-                plan: Some("Gemini Code Assist for individuals".to_owned()),
-            })
-        );
-        assert!(snapshot.usage.windows.is_empty());
-        assert!(snapshot.usage.balances.is_empty());
+            .unwrap_err();
+        assert!(matches!(error, ProviderError::Authentication(_)));
     }
 
     #[tokio::test]
@@ -1613,6 +1597,31 @@ mod tests {
         assert_eq!(snapshot.usage.balances[0].remaining, 500.0);
         assert_eq!(snapshot.usage.balances[1].id, "flow_credits");
         assert_eq!(snapshot.usage.balances[1].remaining, 100.0);
+    }
+
+    #[tokio::test]
+    async fn provider_rejects_quota_payload_without_measurements() {
+        let server = MockServer::start().await;
+        Mock::given(path("/v1internal:loadCodeAssist"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+        Mock::given(path("/v1internal:retrieveUserQuotaSummary"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "groups": [{"buckets": [{"bucketId": "gemini-5h", "resetTime": "2026-09-05T06:40:29Z"}]}]
+            })))
+            .mount(&server).await;
+        let provider = GoogleProvider::new(GoogleProviderConfig {
+            auth_token: Some("test-token".to_owned()),
+            api_base_url: Url::parse(&server.uri()).unwrap(),
+            userinfo_url: Url::parse(&server.uri()).unwrap(),
+            keyring_enabled: false,
+            ..GoogleProviderConfig::default()
+        });
+        assert!(matches!(
+            provider.refresh(RefreshContext::default()).await,
+            Err(ProviderError::Parse(_))
+        ));
     }
 
     #[tokio::test]
