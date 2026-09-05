@@ -8,6 +8,10 @@ use braindrain_providers_claude::{
 };
 use braindrain_providers_cursor::{CURSOR_AUTH_TOKEN_ENV, CursorAccessTokenSource, CursorProvider};
 use braindrain_providers_cursor::{CURSOR_KEYCHAIN_ACCOUNT, CURSOR_KEYCHAIN_SERVICE};
+use braindrain_providers_google::{
+    GOOGLE_AI_ACCESS_TOKEN_ENV, GOOGLE_KEYCHAIN_ACCOUNT, GOOGLE_KEYCHAIN_SERVICE,
+    GoogleAccessTokenSource, GoogleProvider,
+};
 use braindrain_providers_kimi::{
     KIMI_API_KEY_ENV, KIMI_CODE_BASE_URL_ENV, KIMI_CODE_HOME_ENV, KIMI_SHARE_DIR_ENV,
     KimiAccessTokenSource, KimiProvider,
@@ -49,6 +53,7 @@ pub fn provider_ids() -> Vec<ProviderId> {
         ProviderId::kimi(),
         ProviderId::zai(),
         ProviderId::opencode_go(),
+        ProviderId::google(),
     ]
 }
 
@@ -59,6 +64,7 @@ pub fn normalize_provider_id(provider: &str) -> ProviderId {
         "kimi-code" | "kimi-coding-plan" => ProviderId::kimi(),
         "z.ai" => ProviderId::zai(),
         "opencode" | "zen-go" | "opencode-zen" => ProviderId::opencode_go(),
+        "google-ai" | "gemini" | "antigravity" | "agy" => ProviderId::google(),
         provider => ProviderId::new(provider),
     }
 }
@@ -71,6 +77,7 @@ pub async fn info_provider(provider: &str) -> Result<ProviderInfo, ServiceError>
         ProviderId::KIMI => Ok(info_kimi()),
         ProviderId::ZAI => Ok(info_zai()),
         ProviderId::OPENCODE_GO => Ok(info_opencode_go().await),
+        ProviderId::GOOGLE => Ok(info_google().await),
         provider => Err(ServiceError::UnsupportedProvider {
             provider: provider.to_owned(),
         }),
@@ -104,6 +111,12 @@ pub async fn check_provider(provider: &str) -> Result<ProviderSnapshot, ServiceE
             .refresh(context)
             .await
             .map_err(ServiceError::from),
+        ProviderId::GOOGLE => {
+            // Keep the HTTP client and refreshed OAuth token across daemon polls.
+            static GOOGLE: std::sync::LazyLock<GoogleProvider> =
+                std::sync::LazyLock::new(GoogleProvider::default);
+            GOOGLE.refresh(context).await.map_err(ServiceError::from)
+        }
         provider => Err(ServiceError::UnsupportedProvider {
             provider: provider.to_owned(),
         }),
@@ -358,6 +371,48 @@ async fn info_opencode_go() -> ProviderInfo {
     info
 }
 
+async fn info_google() -> ProviderInfo {
+    let provider = GoogleProvider::default();
+    let mut info = ProviderInfo::new(ProviderId::google());
+    info.push("api_base_url", provider.config().api_base_url.to_string());
+    info.push("token_url", provider.config().token_url.to_string());
+    info.push("env_token", GOOGLE_AI_ACCESS_TOKEN_ENV);
+    info.push("keyring_service", GOOGLE_KEYCHAIN_SERVICE);
+    info.push("keyring_account", GOOGLE_KEYCHAIN_ACCOUNT);
+
+    match provider.config().auth_token_async().await {
+        Ok(token) => {
+            info.push("auth_found", "true");
+            info.push(
+                "auth_source",
+                match token.source {
+                    GoogleAccessTokenSource::Config => "config",
+                    GoogleAccessTokenSource::Environment(name) => name,
+                    GoogleAccessTokenSource::Keyring => "keyring",
+                },
+            );
+            info.push(
+                "has_refresh_token",
+                token.refresh_token.is_some().to_string(),
+            );
+            if let Some(expiry) = token.expiry {
+                info.push(
+                    "expiry",
+                    expiry
+                        .format(&time::format_description::well_known::Rfc3339)
+                        .unwrap_or_default(),
+                );
+            }
+        }
+        Err(error) => {
+            info.push("auth_found", "false");
+            info.push("auth_error", error.to_string());
+        }
+    }
+
+    info
+}
+
 impl ProviderInfo {
     fn new(provider: ProviderId) -> Self {
         Self {
@@ -406,6 +461,17 @@ mod tests {
             normalize_provider_id("opencode-go").as_str(),
             ProviderId::OPENCODE_GO
         );
+        assert_eq!(
+            normalize_provider_id("google-ai").as_str(),
+            ProviderId::GOOGLE
+        );
+        assert_eq!(normalize_provider_id("gemini").as_str(), ProviderId::GOOGLE);
+        assert_eq!(
+            normalize_provider_id("antigravity").as_str(),
+            ProviderId::GOOGLE
+        );
+        assert_eq!(normalize_provider_id("agy").as_str(), ProviderId::GOOGLE);
+        assert_eq!(normalize_provider_id("google").as_str(), ProviderId::GOOGLE);
     }
 
     #[test]
@@ -418,7 +484,8 @@ mod tests {
                 ProviderId::cursor(),
                 ProviderId::kimi(),
                 ProviderId::zai(),
-                ProviderId::opencode_go()
+                ProviderId::opencode_go(),
+                ProviderId::google(),
             ]
         );
     }

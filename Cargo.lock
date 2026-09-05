@@ -549,6 +549,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "braindrain-providers-google"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "braindrain-core",
+ "keyring",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "time",
+ "tokio",
+ "url",
+ "wiremock",
+]
+
+[[package]]
 name = "braindrain-providers-kimi"
 version = "0.1.0"
 dependencies = [
@@ -621,11 +639,13 @@ dependencies = [
  "braindrain-core",
  "braindrain-providers-claude",
  "braindrain-providers-cursor",
+ "braindrain-providers-google",
  "braindrain-providers-kimi",
  "braindrain-providers-openai",
  "braindrain-providers-opencode-go",
  "braindrain-providers-zai",
  "thiserror",
+ "time",
 ]
 
 [[package]]

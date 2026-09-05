@@ -9,6 +9,7 @@ members = [
   "crates/desktop",
   "crates/providers-claude",
   "crates/providers-cursor",
+  "crates/providers-google",
   "crates/providers-kimi",
   "crates/providers-openai",
   "crates/providers-opencode-go",
@@ -27,6 +28,7 @@ license = "MIT"
 anyhow = "1.0.102"
 assert_cmd = "2.2.2"
 async-trait = "0.1.89"
+base64 = "0.22.1"
 clap = { version = "4.6.1", features = ["derive"] }
 directories = "6.0.0"
 fs4 = "1.1.0"
