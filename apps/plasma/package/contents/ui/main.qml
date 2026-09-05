@@ -547,6 +547,9 @@ PlasmoidItem {
     if (provider === "opencode-go") {
       return "OpenCode Go";
     }
+    if (provider === "google") {
+      return "Google AI";
+    }
     return provider || "";
   }
 

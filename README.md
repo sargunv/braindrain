@@ -51,3 +51,23 @@ BrainDrain does not hard-code or rewrite Kimi's dynamic model catalog.
 The OAuth implementation tracks the first-party protocol at MoonshotAI/kimi-cli
 commit
 [`4a550eff`](https://github.com/MoonshotAI/kimi-cli/tree/4a550effdfcb29a25a5d325bf935296cc50cd417).
+
+## Google AI / Gemini / Antigravity
+
+Sign in using the Antigravity CLI (`agy`), then run:
+
+```console
+braindrain check google
+```
+
+(Aliases `gemini`, `google-ai`, `antigravity`, and `agy` are also supported.)
+
+BrainDrain automatically discovers credentials saved by the Antigravity CLI in
+the system keyring (service `gemini`, account `antigravity`). It automatically
+refreshes expiring OAuth access tokens, retrieves account details and plan tier
+via Google's Code Assist endpoints, and tracks quota summary rate windows and AI
+credit balances (e.g. Prompt Credits and Flow Credits).
+
+You can also provide or override credentials via environment variables:
+`GOOGLE_AI_ACCESS_TOKEN` (or `GEMINI_ACCESS_TOKEN`), `GOOGLE_AI_REFRESH_TOKEN`,
+`GOOGLE_AI_PROJECT_ID` (or `GOOGLE_CLOUD_PROJECT`), and `GOOGLE_AI_BASE_URL`.

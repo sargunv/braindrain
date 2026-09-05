@@ -32,6 +32,7 @@ pub fn provider_title(id: &str) -> &str {
         "kimi" => "Kimi Code",
         "zai" => "z.ai",
         "opencode-go" => "OpenCode Go",
+        "google" => "Google AI",
         other => other,
     }
 }

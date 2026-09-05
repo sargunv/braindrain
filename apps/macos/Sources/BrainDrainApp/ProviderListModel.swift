@@ -123,6 +123,8 @@ struct ProviderViewState: Identifiable {
             "z.ai"
         case "opencode-go":
             "OpenCode Go"
+        case "google":
+            "Google AI"
         default:
             id
         }
