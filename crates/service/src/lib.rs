@@ -9,7 +9,8 @@ use braindrain_providers_claude::{
 use braindrain_providers_cursor::{CURSOR_AUTH_TOKEN_ENV, CursorAccessTokenSource, CursorProvider};
 use braindrain_providers_cursor::{CURSOR_KEYCHAIN_ACCOUNT, CURSOR_KEYCHAIN_SERVICE};
 use braindrain_providers_google::{
-    GOOGLE_AI_ACCESS_TOKEN_ENV, GoogleAccessTokenSource, GoogleProvider,
+    GOOGLE_AI_ACCESS_TOKEN_ENV, GOOGLE_KEYCHAIN_ACCOUNT, GOOGLE_KEYCHAIN_SERVICE,
+    GoogleAccessTokenSource, GoogleProvider,
 };
 use braindrain_providers_kimi::{
     KIMI_API_KEY_ENV, KIMI_CODE_BASE_URL_ENV, KIMI_CODE_HOME_ENV, KIMI_SHARE_DIR_ENV,
@@ -374,11 +375,10 @@ async fn info_google() -> ProviderInfo {
     info.push("api_base_url", provider.config().api_base_url.to_string());
     info.push("token_url", provider.config().token_url.to_string());
     info.push("env_token", GOOGLE_AI_ACCESS_TOKEN_ENV);
-    info.push("keyring_service", provider.config().keyring_service.clone());
-    info.push("keyring_account", provider.config().keyring_account.clone());
-    info.push("user_agent", provider.config().user_agent.clone());
+    info.push("keyring_service", GOOGLE_KEYCHAIN_SERVICE);
+    info.push("keyring_account", GOOGLE_KEYCHAIN_ACCOUNT);
 
-    match provider.resolve_access_token().await {
+    match provider.config().auth_token_async().await {
         Ok(token) => {
             info.push("auth_found", "true");
             info.push(
@@ -400,17 +400,6 @@ async fn info_google() -> ProviderInfo {
                         .format(&time::format_description::well_known::Rfc3339)
                         .unwrap_or_default(),
                 );
-            }
-            if let Ok(user_info) = provider.fetch_user_info(&token.value).await
-                && let Some(email) = user_info.email
-            {
-                info.push("email", email);
-            }
-            if let Ok(load_code) = provider.fetch_load_code_assist(&token.value).await {
-                info.push("plan", load_code.plan_name());
-                if let Some(project) = load_code.cloudaicompanion_project {
-                    info.push("project", project);
-                }
             }
         }
         Err(error) => {

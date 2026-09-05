@@ -10,7 +10,7 @@ use braindrain_core::{
     ProviderSnapshot, ProviderSource, RateWindow, RefreshContext, UsageSnapshot,
 };
 use fs4::FileExt;
-use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue, USER_AGENT};
+use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 use time::OffsetDateTime;
@@ -67,13 +67,9 @@ pub const GOOGLE_AI_PROJECT_ID_ENV: &str = "GOOGLE_AI_PROJECT_ID";
 pub const GOOGLE_CLOUD_PROJECT_ENV: &str = "GOOGLE_CLOUD_PROJECT";
 pub const GOOGLE_AI_BASE_URL_ENV: &str = "GOOGLE_AI_BASE_URL";
 pub const GOOGLE_AI_TOKEN_URL_ENV: &str = "GOOGLE_AI_TOKEN_URL";
-pub const GOOGLE_AI_USERINFO_URL_ENV: &str = "GOOGLE_AI_USERINFO_URL";
-pub const GOOGLE_AI_USER_AGENT_ENV: &str = "GOOGLE_AI_USER_AGENT";
-pub const GOOGLE_AI_CLIENT_ID_ENV: &str = "GOOGLE_AI_CLIENT_ID";
-pub const GOOGLE_AI_CLIENT_SECRET_ENV: &str = "GOOGLE_AI_CLIENT_SECRET";
-pub const GOOGLE_AI_KEYRING_SERVICE_ENV: &str = "GOOGLE_AI_KEYRING_SERVICE";
-pub const GOOGLE_AI_KEYRING_ACCOUNT_ENV: &str = "GOOGLE_AI_KEYRING_ACCOUNT";
 
+const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const LOCK_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(5);
 const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -134,7 +130,12 @@ impl GoogleProvider {
     pub fn new(config: GoogleProviderConfig) -> Self {
         Self {
             config,
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .user_agent(default_user_agent())
+                .connect_timeout(HTTP_CONNECT_TIMEOUT)
+                .timeout(HTTP_REQUEST_TIMEOUT)
+                .build()
+                .expect("valid Google HTTP client"),
         }
     }
 
@@ -177,17 +178,18 @@ impl GoogleProvider {
         &self,
         refresh_token: &str,
     ) -> Result<GoogleTokenRefreshResponse, GoogleProviderError> {
+        let client_id = default_oauth_client_id();
+        let client_secret = default_oauth_client_secret();
         let params = [
             ("grant_type", "refresh_token"),
-            ("client_id", self.config.client_id.as_str()),
-            ("client_secret", self.config.client_secret.as_str()),
+            ("client_id", client_id.as_str()),
+            ("client_secret", client_secret.as_str()),
             ("refresh_token", refresh_token),
         ];
 
         let response = self
             .client
             .post(self.config.token_url.clone())
-            .header(USER_AGENT, self.config.user_agent.as_str())
             .header(ACCEPT, "application/json")
             .form(&params)
             .send()
@@ -217,7 +219,7 @@ impl GoogleProvider {
         serde_json::from_slice(&body).map_err(GoogleProviderError::Decode)
     }
 
-    pub async fn fetch_load_code_assist(
+    async fn fetch_load_code_assist(
         &self,
         token: &str,
     ) -> Result<LoadCodeAssistResponse, GoogleProviderError> {
@@ -260,7 +262,7 @@ impl GoogleProvider {
         serde_json::from_slice(&body).map_err(GoogleProviderError::Decode)
     }
 
-    pub async fn fetch_user_info(
+    async fn fetch_user_info(
         &self,
         token: &str,
     ) -> Result<GoogleUserInfoResponse, GoogleProviderError> {
@@ -292,7 +294,7 @@ impl GoogleProvider {
         serde_json::from_slice(&body).map_err(GoogleProviderError::Decode)
     }
 
-    pub async fn fetch_user_quota_summary(
+    async fn fetch_user_quota_summary(
         &self,
         token: &str,
         project: Option<&str>,
@@ -354,9 +356,6 @@ impl GoogleProvider {
         let mut headers = HeaderMap::new();
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        let ua = HeaderValue::from_str(&self.config.user_agent)
-            .map_err(|_| GoogleProviderError::InvalidHeader(USER_AGENT.as_str().to_owned()))?;
-        headers.insert(USER_AGENT, ua);
         headers.insert(
             AUTHORIZATION,
             HeaderValue::from_str(&format!("Bearer {token}")).map_err(|_| {
@@ -491,12 +490,10 @@ pub struct GoogleProviderConfig {
     pub api_base_url: Url,
     pub token_url: Url,
     pub userinfo_url: Url,
-    pub user_agent: String,
-    pub client_id: String,
-    pub client_secret: String,
     pub project_id: Option<String>,
-    pub keyring_service: String,
-    pub keyring_account: String,
+    /// Consult the system keyring when no explicit token is present.
+    /// Disabled in tests so they never touch the real keychain.
+    pub keyring_enabled: bool,
     pub refresh_enabled: bool,
 }
 
@@ -506,8 +503,9 @@ impl GoogleProviderConfig {
             return Ok(token);
         }
 
-        if let Some(token) =
-            keyring_access_token_blocking(&self.keyring_service, &self.keyring_account)?
+        if self.keyring_enabled
+            && let Some(token) =
+                keyring_access_token_blocking(GOOGLE_KEYCHAIN_SERVICE, GOOGLE_KEYCHAIN_ACCOUNT)?
         {
             return Ok(token);
         }
@@ -520,13 +518,12 @@ impl GoogleProviderConfig {
             return Ok(token);
         }
 
-        let service = self.keyring_service.clone();
-        let account = self.keyring_account.clone();
-
-        if let Some(token) =
-            tokio::task::spawn_blocking(move || keyring_access_token_blocking(&service, &account))
-                .await
-                .map_err(|e| GoogleProviderError::Keyring(e.to_string()))??
+        if self.keyring_enabled
+            && let Some(token) = tokio::task::spawn_blocking(|| {
+                keyring_access_token_blocking(GOOGLE_KEYCHAIN_SERVICE, GOOGLE_KEYCHAIN_ACCOUNT)
+            })
+            .await
+            .map_err(|e| GoogleProviderError::Keyring(e.to_string()))??
         {
             return Ok(token);
         }
@@ -579,40 +576,12 @@ impl Default for GoogleProviderConfig {
             .and_then(|url| Url::parse(&url).ok())
             .unwrap_or_else(|| Url::parse(GOOGLE_OAUTH_TOKEN_URL).expect("valid token url"));
 
-        let userinfo_url = env::var_os(GOOGLE_AI_USERINFO_URL_ENV)
-            .and_then(|v| v.into_string().ok())
-            .and_then(|url| Url::parse(&url).ok())
-            .unwrap_or_else(|| Url::parse(GOOGLE_USERINFO_URL).expect("valid userinfo url"));
-
-        let client_id = env::var_os(GOOGLE_AI_CLIENT_ID_ENV)
-            .and_then(|v| v.into_string().ok())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(default_oauth_client_id);
-
-        let client_secret = env::var_os(GOOGLE_AI_CLIENT_SECRET_ENV)
-            .and_then(|v| v.into_string().ok())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(default_oauth_client_secret);
+        let userinfo_url = Url::parse(GOOGLE_USERINFO_URL).expect("valid userinfo url");
 
         let project_id = env::var_os(GOOGLE_AI_PROJECT_ID_ENV)
             .or_else(|| env::var_os(GOOGLE_CLOUD_PROJECT_ENV))
             .and_then(|v| v.into_string().ok())
             .filter(|s| !s.is_empty());
-
-        let keyring_service = env::var_os(GOOGLE_AI_KEYRING_SERVICE_ENV)
-            .and_then(|v| v.into_string().ok())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| GOOGLE_KEYCHAIN_SERVICE.to_owned());
-
-        let keyring_account = env::var_os(GOOGLE_AI_KEYRING_ACCOUNT_ENV)
-            .and_then(|v| v.into_string().ok())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| GOOGLE_KEYCHAIN_ACCOUNT.to_owned());
-
-        let user_agent = env::var_os(GOOGLE_AI_USER_AGENT_ENV)
-            .and_then(|v| v.into_string().ok())
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(default_user_agent);
 
         Self {
             auth_token: None,
@@ -621,12 +590,8 @@ impl Default for GoogleProviderConfig {
             api_base_url,
             token_url,
             userinfo_url,
-            user_agent,
-            client_id,
-            client_secret,
             project_id,
-            keyring_service,
-            keyring_account,
+            keyring_enabled: true,
             refresh_enabled: true,
         }
     }
@@ -1334,11 +1299,26 @@ mod tests {
 
     #[test]
     fn explicit_config_token_beats_env() {
-        let mut config = GoogleProviderConfig::default();
+        let mut config = GoogleProviderConfig {
+            keyring_enabled: false,
+            ..GoogleProviderConfig::default()
+        };
         config.auth_token = Some("config-token".to_owned());
         let resolved = config.auth_token().expect("resolve token");
         assert_eq!(resolved.value, "config-token");
         assert_eq!(resolved.source, GoogleAccessTokenSource::Config);
+    }
+
+    #[test]
+    fn disabled_keyring_does_not_touch_system_keychain() {
+        let config = GoogleProviderConfig {
+            keyring_enabled: false,
+            ..GoogleProviderConfig::default()
+        };
+        assert!(matches!(
+            config.auth_token(),
+            Err(GoogleProviderError::MissingAccessToken)
+        ));
     }
 
     #[test]
@@ -1463,12 +1443,8 @@ mod tests {
             api_base_url: Url::parse(&mock_server.uri()).unwrap(),
             token_url: Url::parse(&format!("{}/token", mock_server.uri())).unwrap(),
             userinfo_url: Url::parse(&format!("{}/userinfo", mock_server.uri())).unwrap(),
-            user_agent: default_user_agent(),
-            client_id: "test-client-id".to_owned(),
-            client_secret: "test-client-secret".to_owned(),
             project_id: None,
-            keyring_service: "test-service".to_owned(),
-            keyring_account: "test-account".to_owned(),
+            keyring_enabled: false,
             refresh_enabled: true,
         };
 
@@ -1545,12 +1521,8 @@ mod tests {
             api_base_url: Url::parse(&mock_server.uri()).unwrap(),
             token_url: Url::parse(&format!("{}/token", mock_server.uri())).unwrap(),
             userinfo_url: Url::parse(&format!("{}/userinfo", mock_server.uri())).unwrap(),
-            user_agent: default_user_agent(),
-            client_id: "test-client-id".to_owned(),
-            client_secret: "test-client-secret".to_owned(),
             project_id: None,
-            keyring_service: "test-service".to_owned(),
-            keyring_account: "test-account".to_owned(),
+            keyring_enabled: false,
             refresh_enabled: false,
         };
 
@@ -1621,12 +1593,8 @@ mod tests {
             api_base_url: Url::parse(&mock_server.uri()).unwrap(),
             token_url: Url::parse(&format!("{}/token", mock_server.uri())).unwrap(),
             userinfo_url: Url::parse(&format!("{}/userinfo", mock_server.uri())).unwrap(),
-            user_agent: default_user_agent(),
-            client_id: "test-client-id".to_owned(),
-            client_secret: "test-client-secret".to_owned(),
             project_id: None,
-            keyring_service: "test-service".to_owned(),
-            keyring_account: "test-account".to_owned(),
+            keyring_enabled: false,
             refresh_enabled: false,
         };
 
@@ -1664,12 +1632,8 @@ mod tests {
             api_base_url: Url::parse(&mock_server.uri()).unwrap(),
             token_url: Url::parse(&format!("{}/token", mock_server.uri())).unwrap(),
             userinfo_url: Url::parse(&format!("{}/userinfo", mock_server.uri())).unwrap(),
-            user_agent: default_user_agent(),
-            client_id: "test-client-id".to_owned(),
-            client_secret: "test-client-secret".to_owned(),
             project_id: None,
-            keyring_service: "test-service".to_owned(),
-            keyring_account: "test-account".to_owned(),
+            keyring_enabled: false,
             refresh_enabled: false,
         };
 
