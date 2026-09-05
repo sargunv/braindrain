@@ -376,6 +376,7 @@ async fn info_google() -> ProviderInfo {
     info.push("env_token", GOOGLE_AI_ACCESS_TOKEN_ENV);
     info.push("keyring_service", provider.config().keyring_service.clone());
     info.push("keyring_account", provider.config().keyring_account.clone());
+    info.push("user_agent", provider.config().user_agent.clone());
 
     match provider.resolve_access_token().await {
         Ok(token) => {

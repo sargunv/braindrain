@@ -43,6 +43,19 @@ pub fn default_oauth_client_secret() -> String {
     String::from_utf8(unmasked).unwrap_or_default()
 }
 
+pub fn default_user_agent() -> String {
+    let os_name = match std::env::consts::OS {
+        "macos" => "darwin",
+        other => other,
+    };
+    let arch_name = match std::env::consts::ARCH {
+        "aarch64" => "arm64",
+        "x86_64" => "amd64",
+        other => other,
+    };
+    format!("antigravity/1.1.26 ({os_name}; {arch_name})")
+}
+
 pub const GOOGLE_KEYCHAIN_SERVICE: &str = "gemini";
 pub const GOOGLE_KEYCHAIN_ACCOUNT: &str = "antigravity";
 
@@ -55,6 +68,7 @@ pub const GOOGLE_CLOUD_PROJECT_ENV: &str = "GOOGLE_CLOUD_PROJECT";
 pub const GOOGLE_AI_BASE_URL_ENV: &str = "GOOGLE_AI_BASE_URL";
 pub const GOOGLE_AI_TOKEN_URL_ENV: &str = "GOOGLE_AI_TOKEN_URL";
 pub const GOOGLE_AI_USERINFO_URL_ENV: &str = "GOOGLE_AI_USERINFO_URL";
+pub const GOOGLE_AI_USER_AGENT_ENV: &str = "GOOGLE_AI_USER_AGENT";
 pub const GOOGLE_AI_CLIENT_ID_ENV: &str = "GOOGLE_AI_CLIENT_ID";
 pub const GOOGLE_AI_CLIENT_SECRET_ENV: &str = "GOOGLE_AI_CLIENT_SECRET";
 pub const GOOGLE_AI_KEYRING_SERVICE_ENV: &str = "GOOGLE_AI_KEYRING_SERVICE";
@@ -173,7 +187,7 @@ impl GoogleProvider {
         let response = self
             .client
             .post(self.config.token_url.clone())
-            .header(USER_AGENT, "braindrain")
+            .header(USER_AGENT, self.config.user_agent.as_str())
             .header(ACCEPT, "application/json")
             .form(&params)
             .send()
@@ -340,7 +354,9 @@ impl GoogleProvider {
         let mut headers = HeaderMap::new();
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        headers.insert(USER_AGENT, HeaderValue::from_static("braindrain"));
+        let ua = HeaderValue::from_str(&self.config.user_agent)
+            .map_err(|_| GoogleProviderError::InvalidHeader(USER_AGENT.as_str().to_owned()))?;
+        headers.insert(USER_AGENT, ua);
         headers.insert(
             AUTHORIZATION,
             HeaderValue::from_str(&format!("Bearer {token}")).map_err(|_| {
@@ -475,6 +491,7 @@ pub struct GoogleProviderConfig {
     pub api_base_url: Url,
     pub token_url: Url,
     pub userinfo_url: Url,
+    pub user_agent: String,
     pub client_id: String,
     pub client_secret: String,
     pub project_id: Option<String>,
@@ -592,6 +609,11 @@ impl Default for GoogleProviderConfig {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| GOOGLE_KEYCHAIN_ACCOUNT.to_owned());
 
+        let user_agent = env::var_os(GOOGLE_AI_USER_AGENT_ENV)
+            .and_then(|v| v.into_string().ok())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(default_user_agent);
+
         Self {
             auth_token: None,
             refresh_token: None,
@@ -599,6 +621,7 @@ impl Default for GoogleProviderConfig {
             api_base_url,
             token_url,
             userinfo_url,
+            user_agent,
             client_id,
             client_secret,
             project_id,
@@ -909,51 +932,22 @@ pub struct RetrieveUserQuotaSummaryResponse {
 
 impl RetrieveUserQuotaSummaryResponse {
     pub fn usage_snapshot(&self) -> UsageSnapshot {
-        let mut all_buckets = Vec::new();
-        all_buckets.extend(self.buckets.clone());
-        for group in &self.groups {
-            all_buckets.extend(group.buckets.clone());
-        }
-
         let mut seen_ids = HashSet::new();
         let mut windows = Vec::new();
 
-        for bucket in all_buckets {
-            let id = bucket
-                .bucket_id
-                .clone()
-                .unwrap_or_else(|| "quota".to_owned());
-
-            if !seen_ids.insert(id.clone()) {
-                continue;
+        for bucket in &self.buckets {
+            if let Some(window) = parse_bucket(None, bucket, &mut seen_ids) {
+                windows.push(window);
             }
+        }
 
-            let used_percent = match bucket.remaining_fraction {
-                Some(fraction) if fraction.is_finite() => {
-                    ((1.0 - fraction) * 100.0).clamp(0.0, 100.0)
+        for group in &self.groups {
+            let group_name = group.display_name.as_deref();
+            for bucket in &group.buckets {
+                if let Some(window) = parse_bucket(group_name, bucket, &mut seen_ids) {
+                    windows.push(window);
                 }
-                _ => 0.0,
-            };
-
-            let label = bucket
-                .display_name
-                .clone()
-                .or_else(|| bucket.description.clone())
-                .unwrap_or_else(|| id.clone());
-
-            let duration = bucket.window.as_deref().and_then(parse_duration_string);
-            let resets_at = bucket
-                .reset_time
-                .as_ref()
-                .and_then(|t| t.to_offset_date_time());
-
-            windows.push(RateWindow {
-                id,
-                label,
-                used_percent,
-                duration,
-                resets_at,
-            });
+            }
         }
 
         UsageSnapshot {
@@ -961,6 +955,66 @@ impl RetrieveUserQuotaSummaryResponse {
             balances: Vec::new(),
             reset_credits: Vec::new(),
         }
+    }
+}
+
+fn parse_bucket(
+    group_name: Option<&str>,
+    bucket: &QuotaSummaryBucket,
+    seen_ids: &mut HashSet<String>,
+) -> Option<RateWindow> {
+    let id = bucket
+        .bucket_id
+        .clone()
+        .unwrap_or_else(|| "quota".to_owned());
+
+    if !seen_ids.insert(id.clone()) {
+        return None;
+    }
+
+    let used_percent = match bucket.remaining_fraction {
+        Some(fraction) if fraction.is_finite() => ((1.0 - fraction) * 100.0).clamp(0.0, 100.0),
+        _ => 0.0,
+    };
+
+    let duration = bucket.window.as_deref().and_then(parse_duration_string);
+    let resets_at = bucket
+        .reset_time
+        .as_ref()
+        .and_then(|t| t.to_offset_date_time());
+
+    let label = format_window_label(group_name, bucket);
+
+    Some(RateWindow {
+        id,
+        label,
+        used_percent,
+        duration,
+        resets_at,
+    })
+}
+
+fn format_window_label(group_name: Option<&str>, bucket: &QuotaSummaryBucket) -> String {
+    let window_tag = match bucket.window.as_deref() {
+        Some("5h") => Some("5h"),
+        Some("weekly") => Some("Weekly"),
+        Some("daily") => Some("Daily"),
+        Some("hourly") => Some("Hourly"),
+        Some("monthly") => Some("Monthly"),
+        Some(other) => Some(other),
+        None => None,
+    };
+
+    match (group_name, window_tag, bucket.display_name.as_deref()) {
+        (Some(group), Some(win), _) => format!("{group} ({win})"),
+        (Some(group), None, Some(disp)) => format!("{group}: {disp}"),
+        (Some(group), None, None) => group.to_owned(),
+        (None, _, Some(disp)) => disp.to_owned(),
+        (None, _, None) => bucket
+            .description
+            .clone()
+            .or_else(|| bucket.bucket_id.clone())
+            .unwrap_or_else(|| "Quota".to_owned()),
     }
 }
 
@@ -1060,6 +1114,15 @@ pub fn parse_duration_string(s: &str) -> Option<Duration> {
         return None;
     }
 
+    let lower = trimmed.to_ascii_lowercase();
+    match lower.as_str() {
+        "hourly" | "1h" => return Some(Duration::from_secs(3600)),
+        "daily" | "1d" => return Some(Duration::from_secs(86400)),
+        "weekly" | "1w" => return Some(Duration::from_secs(7 * 86400)),
+        "monthly" => return Some(Duration::from_secs(30 * 86400)),
+        _ => {}
+    }
+
     let parse_positive_secs = |val: &str, multiplier: f64| -> Option<Duration> {
         let n: f64 = val.parse().ok()?;
         (n.is_finite() && n >= 0.0).then(|| Duration::from_secs_f64(n * multiplier))
@@ -1074,12 +1137,12 @@ pub fn parse_duration_string(s: &str) -> Option<Duration> {
     ];
 
     for (suffix, multiplier) in UNITS {
-        if let Some(val) = trimmed.strip_suffix(suffix) {
+        if let Some(val) = lower.strip_suffix(suffix) {
             return parse_positive_secs(val, multiplier);
         }
     }
 
-    parse_positive_secs(trimmed, 1.0)
+    parse_positive_secs(&lower, 1.0)
 }
 
 fn parse_rfc3339_timestamp(s: &str) -> Option<OffsetDateTime> {
@@ -1201,6 +1264,18 @@ mod tests {
         assert_eq!(
             parse_duration_string("1800"),
             Some(Duration::from_secs(1800))
+        );
+        assert_eq!(
+            parse_duration_string("weekly"),
+            Some(Duration::from_secs(7 * 86400))
+        );
+        assert_eq!(
+            parse_duration_string("daily"),
+            Some(Duration::from_secs(86400))
+        );
+        assert_eq!(
+            parse_duration_string("hourly"),
+            Some(Duration::from_secs(3600))
         );
         assert_eq!(parse_duration_string(""), None);
         assert_eq!(parse_duration_string("unknown"), None);
@@ -1388,6 +1463,7 @@ mod tests {
             api_base_url: Url::parse(&mock_server.uri()).unwrap(),
             token_url: Url::parse(&format!("{}/token", mock_server.uri())).unwrap(),
             userinfo_url: Url::parse(&format!("{}/userinfo", mock_server.uri())).unwrap(),
+            user_agent: default_user_agent(),
             client_id: "test-client-id".to_owned(),
             client_secret: "test-client-secret".to_owned(),
             project_id: None,
@@ -1469,6 +1545,7 @@ mod tests {
             api_base_url: Url::parse(&mock_server.uri()).unwrap(),
             token_url: Url::parse(&format!("{}/token", mock_server.uri())).unwrap(),
             userinfo_url: Url::parse(&format!("{}/userinfo", mock_server.uri())).unwrap(),
+            user_agent: default_user_agent(),
             client_id: "test-client-id".to_owned(),
             client_secret: "test-client-secret".to_owned(),
             project_id: None,
@@ -1544,6 +1621,7 @@ mod tests {
             api_base_url: Url::parse(&mock_server.uri()).unwrap(),
             token_url: Url::parse(&format!("{}/token", mock_server.uri())).unwrap(),
             userinfo_url: Url::parse(&format!("{}/userinfo", mock_server.uri())).unwrap(),
+            user_agent: default_user_agent(),
             client_id: "test-client-id".to_owned(),
             client_secret: "test-client-secret".to_owned(),
             project_id: None,
@@ -1559,6 +1637,7 @@ mod tests {
             .expect("refresh succeeds");
         assert_eq!(snapshot.usage.windows.len(), 1);
         assert_eq!(snapshot.usage.windows[0].id, "gemini-pro");
+        assert_eq!(snapshot.usage.windows[0].label, "Code Models (24h)");
         assert!((snapshot.usage.windows[0].used_percent - 20.0).abs() < 0.001);
 
         assert_eq!(snapshot.usage.balances.len(), 2);
@@ -1585,6 +1664,7 @@ mod tests {
             api_base_url: Url::parse(&mock_server.uri()).unwrap(),
             token_url: Url::parse(&format!("{}/token", mock_server.uri())).unwrap(),
             userinfo_url: Url::parse(&format!("{}/userinfo", mock_server.uri())).unwrap(),
+            user_agent: default_user_agent(),
             client_id: "test-client-id".to_owned(),
             client_secret: "test-client-secret".to_owned(),
             project_id: None,
