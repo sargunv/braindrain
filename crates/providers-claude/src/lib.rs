@@ -2,6 +2,8 @@ use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
+use std::process::{Command, Output};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use braindrain_core::{
@@ -97,7 +99,7 @@ impl ClaudeProvider {
         // The keyring copy is read-only: rotating a credential braindrain
         // cannot write back would strand the CLI.
         if self.config.keyring_enabled
-            && let Some(oauth) = keyring_credentials().await?
+            && let Some(oauth) = system_keychain_credentials().await?
         {
             return oauth.into_access_token(ClaudeAccessTokenSource::Keyring, &path);
         }
@@ -394,7 +396,7 @@ impl ClaudeProviderConfig {
         }
 
         if self.keyring_enabled
-            && let Some(oauth) = keyring_credentials().await?
+            && let Some(oauth) = system_keychain_credentials().await?
         {
             return oauth.into_access_token(ClaudeAccessTokenSource::Keyring, &path);
         }
@@ -696,13 +698,60 @@ fn save_raw_credentials(path: &Path, raw: &Value) -> Result<(), ClaudeProviderEr
     Ok(())
 }
 
-async fn keyring_credentials() -> Result<Option<ClaudeOAuthCredential>, ClaudeProviderError> {
-    tokio::task::spawn_blocking(keyring_credentials_blocking)
+async fn system_keychain_credentials() -> Result<Option<ClaudeOAuthCredential>, ClaudeProviderError>
+{
+    tokio::task::spawn_blocking(system_keychain_credentials_blocking)
         .await
         .map_err(|_| ClaudeProviderError::KeyringJoin)?
 }
 
-fn keyring_credentials_blocking() -> Result<Option<ClaudeOAuthCredential>, ClaudeProviderError> {
+#[cfg(target_os = "macos")]
+fn system_keychain_credentials_blocking()
+-> Result<Option<ClaudeOAuthCredential>, ClaudeProviderError> {
+    let account = env::var("USER")
+        .or_else(|_| env::var("USERNAME"))
+        .unwrap_or_default();
+    // Claude Code writes this item with `/usr/bin/security`, whose update path
+    // restores the item to the `apple-tool:` partition. Reading it directly
+    // through Security.framework makes every later Claude credential update
+    // invalidate BrainDrain's "Always Allow" grant. Use the same Apple tool so
+    // the reader continues to match the ACL that Claude owns.
+    let output = Command::new("/usr/bin/security")
+        .args([
+            "find-generic-password",
+            "-s",
+            CLAUDE_KEYCHAIN_SERVICE,
+            "-a",
+            &account,
+            "-w",
+        ])
+        .output()
+        .map_err(ClaudeProviderError::KeychainCommand)?;
+
+    decode_macos_keychain_output(output)
+}
+
+#[cfg(target_os = "macos")]
+fn decode_macos_keychain_output(
+    output: Output,
+) -> Result<Option<ClaudeOAuthCredential>, ClaudeProviderError> {
+    if output.status.success() {
+        return Ok(ClaudeCredentials::parse(&output.stdout)
+            .map_err(ClaudeProviderError::KeyringDecode)?
+            .claude_ai_oauth);
+    }
+    // `security` returns the low byte of errSecItemNotFound (-25300).
+    if output.status.code() == Some(44) {
+        return Ok(None);
+    }
+    Err(ClaudeProviderError::KeychainCommandStatus {
+        status: output.status,
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn system_keychain_credentials_blocking()
+-> Result<Option<ClaudeOAuthCredential>, ClaudeProviderError> {
     let account = env::var("USER")
         .or_else(|_| env::var("USERNAME"))
         .unwrap_or_default();
@@ -955,6 +1004,12 @@ pub enum ClaudeProviderError {
     },
     #[error("could not read Claude Code credentials from the system keyring: {0}")]
     Keyring(keyring::Error),
+    #[cfg(target_os = "macos")]
+    #[error("could not run the macOS keychain reader: {0}")]
+    KeychainCommand(std::io::Error),
+    #[cfg(target_os = "macos")]
+    #[error("the macOS keychain reader failed with {status}")]
+    KeychainCommandStatus { status: std::process::ExitStatus },
     #[error("could not parse Claude Code credentials from the system keyring: {0}")]
     KeyringDecode(serde_json::Error),
     #[error("system keyring lookup task failed")]
@@ -1005,6 +1060,11 @@ impl From<ClaudeProviderError> for ProviderError {
             | ClaudeProviderError::LockCredentialsTimeout { .. }
             | ClaudeProviderError::Encode(_)
             | ClaudeProviderError::InvalidHeader(_) => ProviderError::Network(error.to_string()),
+            #[cfg(target_os = "macos")]
+            ClaudeProviderError::KeychainCommand(_)
+            | ClaudeProviderError::KeychainCommandStatus { .. } => {
+                ProviderError::Network(error.to_string())
+            }
         }
     }
 }
@@ -1067,6 +1127,8 @@ fn body_preview(body: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
+    use std::os::unix::process::ExitStatusExt;
     use wiremock::matchers::{body_string_contains, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -1102,6 +1164,47 @@ mod tests {
         )
         .expect("write credentials");
         path
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_keychain_reader_decodes_security_output() {
+        let output = Output {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: serde_json::json!({
+                "claudeAiOauth": {
+                    "accessToken": "access-token",
+                    "refreshToken": "refresh-token",
+                    "subscriptionType": "max"
+                }
+            })
+            .to_string()
+            .into_bytes(),
+            stderr: Vec::new(),
+        };
+
+        let oauth = decode_macos_keychain_output(output)
+            .expect("successful keychain read")
+            .expect("OAuth credential");
+        assert_eq!(oauth.access_token, "access-token");
+        assert_eq!(oauth.refresh_token, "refresh-token");
+        assert_eq!(oauth.subscription_type.as_deref(), Some("max"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_keychain_reader_maps_security_item_not_found() {
+        let output = Output {
+            status: std::process::ExitStatus::from_raw(44 << 8),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        };
+
+        assert!(
+            decode_macos_keychain_output(output)
+                .expect("missing item is not an error")
+                .is_none()
+        );
     }
 
     #[test]
