@@ -403,7 +403,7 @@ pub struct CodexUsageResponse {
     pub rate_limit: Option<CodexRateLimit>,
     #[serde(default)]
     pub credits: Option<CodexCredits>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub additional_rate_limits: Vec<CodexAdditionalRateLimit>,
 }
 
@@ -508,7 +508,7 @@ impl CodexCredits {
 pub struct CodexResetCreditsResponse {
     #[serde(default)]
     pub available_count: u64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub credits: Vec<CodexResetCredit>,
 }
 
@@ -899,6 +899,14 @@ fn env_codex_home() -> Option<PathBuf> {
     env::var_os("CODEX_HOME").map(PathBuf::from)
 }
 
+fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 fn deserialize_optional_f64<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
 where
     D: Deserializer<'de>,
@@ -1072,6 +1080,41 @@ mod tests {
         assert_eq!(snapshot.balances.len(), 1);
         assert_eq!(snapshot.balances[0].remaining, 12.5);
         assert!(snapshot.reset_credits.is_empty());
+    }
+
+    #[test]
+    fn usage_response_tolerates_null_additional_rate_limits() {
+        let usage: CodexUsageResponse = serde_json::from_value(serde_json::json!({
+            "plan_type": "pro",
+            "rate_limit": {
+                "allowed": false,
+                "limit_reached": true,
+                "primary_window": {
+                    "used_percent": 100,
+                    "limit_window_seconds": 604_800,
+                    "reset_after_seconds": 60_411,
+                    "reset_at": 1_789_810_431
+                },
+                "secondary_window": null
+            },
+            "code_review_rate_limit": null,
+            "additional_rate_limits": null,
+            "credits": {
+                "has_credits": false,
+                "unlimited": false,
+                "balance": "0"
+            }
+        }))
+        .expect("parse usage");
+
+        let snapshot = usage.usage_snapshot();
+        let ids: Vec<_> = snapshot
+            .windows
+            .iter()
+            .map(|window| window.id.as_str())
+            .collect();
+        assert_eq!(ids, ["weekly"]);
+        assert!(snapshot.balances.is_empty());
     }
 
     #[test]

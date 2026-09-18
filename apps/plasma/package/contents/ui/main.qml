@@ -19,8 +19,6 @@ PlasmoidItem {
   property string selectedProviderId: providerOrder.length > 0 ? providerOrder[0] : ""
   property bool isRefreshing: false
   property string daemonError: ""
-  property date lastRefresh
-  property bool hasLastRefresh: false
 
   switchWidth: Plasmoid.formFactor === PlasmaCore.Types.Horizontal ? 1 : Kirigami.Units.gridUnit * 22
   switchHeight: Plasmoid.formFactor === PlasmaCore.Types.Vertical ? 1 : Kirigami.Units.gridUnit * 19
@@ -454,8 +452,6 @@ PlasmoidItem {
         applyStates(states);
       }
       isRefreshing = false;
-      lastRefresh = new Date();
-      hasLastRefresh = true;
     });
   }
 
@@ -477,8 +473,6 @@ PlasmoidItem {
     }
     next[provider] = state
     providerStates = next
-    lastRefresh = new Date()
-    hasLastRefresh = true
   }
 
   function applyStates(states) {
@@ -497,8 +491,6 @@ PlasmoidItem {
     if (!selectedProviderId && providerOrder.length > 0) {
       selectedProviderId = providerOrder[0];
     }
-    lastRefresh = new Date();
-    hasLastRefresh = true;
   }
 
   function selectedState() {
@@ -607,8 +599,12 @@ PlasmoidItem {
     if (isRefreshing) {
       return "Refreshing";
     }
-    if (hasLastRefresh) {
-      return "Updated " + lastRefresh.toLocaleTimeString(Qt.locale());
+    const state = selectedState();
+    if (state && state.last_success_at) {
+      const date = new Date(state.last_success_at);
+      if (!isNaN(date.getTime())) {
+        return "Updated " + relativeTime(date);
+      }
     }
     return "Not updated";
   }

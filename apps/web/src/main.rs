@@ -291,20 +291,14 @@ fn page_model_at(
         })
         .collect();
 
-    let selected = selected_id.as_deref().and_then(|id| {
-        status
-            .providers
-            .iter()
-            .find(|state| state.provider == id)
-            .map(|state| provider_view(state, now))
-    });
+    let selected_state = selected_id
+        .as_deref()
+        .and_then(|id| status.providers.iter().find(|state| state.provider == id));
+    let selected = selected_state.map(|state| provider_view(state, now));
     let refreshing = status.providers.iter().any(|state| state.refreshing);
-    let updated = status
-        .providers
-        .iter()
-        .filter_map(|state| state.last_success_at)
-        .max()
-        .map(format_updated)
+    let updated = selected_state
+        .and_then(|state| state.last_success_at)
+        .map(|timestamp| format_updated(timestamp, now))
         .unwrap_or_else(|| "Not updated".to_owned());
 
     IndexTemplate {
@@ -429,12 +423,8 @@ fn format_relative(timestamp: OffsetDateTime, now: OffsetDateTime) -> String {
     )
 }
 
-fn format_updated(timestamp: OffsetDateTime) -> String {
-    let format = time::macros::format_description!("[hour]:[minute] UTC");
-    timestamp
-        .format(format)
-        .map(|time| format!("Updated {time}"))
-        .unwrap_or_else(|_| "Updated".to_owned())
+fn format_updated(timestamp: OffsetDateTime, now: OffsetDateTime) -> String {
+    format!("Updated {}", format_relative(timestamp, now))
 }
 
 fn format_exact(timestamp: OffsetDateTime) -> String {
@@ -571,6 +561,39 @@ mod tests {
 
         let page = page_model(status, Some("missing"));
         assert_eq!(page.selected.expect("selected provider").id, "openai");
+    }
+
+    #[test]
+    fn header_updated_uses_selected_provider_timestamp() {
+        let now = OffsetDateTime::from_unix_timestamp(1_780_704_000).expect("valid now");
+        let stale = now - Duration::from_secs(2 * 3_600);
+        let status = DaemonStatus {
+            version: "test".to_owned(),
+            providers: vec![
+                CachedProviderState {
+                    provider: "openai".to_owned(),
+                    snapshot: None,
+                    error: Some("refresh failed".to_owned()),
+                    refreshing: false,
+                    last_attempt_at: Some(now),
+                    last_success_at: Some(stale),
+                },
+                CachedProviderState {
+                    provider: "claude".to_owned(),
+                    snapshot: None,
+                    error: None,
+                    refreshing: false,
+                    last_attempt_at: Some(now),
+                    last_success_at: Some(now),
+                },
+            ],
+        };
+
+        let page = page_model_at(status.clone(), Some("openai"), now);
+        assert_eq!(page.updated, "Updated 2h ago");
+
+        let page = page_model_at(status, Some("claude"), now);
+        assert_eq!(page.updated, "Updated now");
     }
 
     #[test]

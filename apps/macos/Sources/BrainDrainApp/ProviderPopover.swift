@@ -107,7 +107,7 @@ struct ProviderPopover: View {
     private var footer: some View {
         HStack(spacing: 10) {
             footerStatus
-                .frame(width: 120, alignment: .leading)
+                .frame(width: 140, alignment: .leading)
 
             Spacer()
 
@@ -128,6 +128,17 @@ struct ProviderPopover: View {
                     .controlSize(.small)
                 Text("Refreshing")
                     .foregroundStyle(.secondary)
+            } else if let provider = model.selectedProvider {
+                if let updatedAt = provider.snapshot?.updatedAt,
+                   let updatedDate = parseRFC3339(updatedAt)
+                {
+                    Text("Updated \(relativeResetText(for: updatedDate))")
+                        .foregroundStyle(.secondary)
+                        .help("Updated \(exactResetText(for: updatedDate))")
+                } else {
+                    Text("Not updated")
+                        .foregroundStyle(.secondary)
+                }
             } else if let lastRefresh = model.lastRefresh {
                 Text("Updated \(lastRefresh.formatted(date: .omitted, time: .shortened))")
                     .foregroundStyle(.secondary)

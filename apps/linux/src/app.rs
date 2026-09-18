@@ -308,18 +308,22 @@ fn header_subtitle(model: &AppModel) -> String {
     if model.refreshing {
         return "Refreshing…".to_owned();
     }
-    if let Some(status) = &model.status
-        && let Some(first) = status.providers.first()
-        && let Some(t) = first.last_success_at
-    {
-        return format!("Updated {}", format_time(t));
+    if let Some(status) = &model.status {
+        let state = model
+            .selected
+            .as_deref()
+            .and_then(|selected| {
+                status
+                    .providers
+                    .iter()
+                    .find(|state| state.provider == selected)
+            })
+            .or(status.providers.first());
+        if let Some(t) = state.and_then(|state| state.last_success_at) {
+            return format!("Updated {}", relative_time(t));
+        }
     }
     String::new()
-}
-
-fn format_time(t: time::OffsetDateTime) -> String {
-    let format = time::macros::format_description!("[hour]:[minute]");
-    t.format(format).unwrap_or_else(|_| "?".to_owned())
 }
 
 fn relative_time(t: time::OffsetDateTime) -> String {
