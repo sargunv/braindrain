@@ -478,9 +478,9 @@ async fn info_xiaomi() -> ProviderInfo {
 
     match provider.auth_cookie_async().await {
         Ok(cookie) => {
-            info.push("cookie_found", "true");
+            info.push("auth_found", "true");
             info.push(
-                "cookie_source",
+                "auth_source",
                 match cookie.source {
                     XiaomiAuthCookieSource::Config => "config",
                     XiaomiAuthCookieSource::Environment(name) => name,
@@ -489,8 +489,8 @@ async fn info_xiaomi() -> ProviderInfo {
             );
         }
         Err(error) => {
-            info.push("cookie_found", "false");
-            info.push("cookie_error", error.to_string());
+            info.push("auth_found", "false");
+            info.push("auth_error", error.to_string());
         }
     }
 

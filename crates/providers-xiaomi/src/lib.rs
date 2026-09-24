@@ -820,12 +820,13 @@ fn value_to_f64(value: &Value) -> Option<f64> {
 
 fn body_preview(body: &[u8]) -> String {
     const MAX_BODY_PREVIEW: usize = 512;
-    let mut body = String::from_utf8_lossy(body).to_string();
     if body.len() > MAX_BODY_PREVIEW {
-        body.truncate(MAX_BODY_PREVIEW);
-        body.push_str("...");
+        let mut preview = String::from_utf8_lossy(&body[..MAX_BODY_PREVIEW]).into_owned();
+        preview.push_str("...");
+        preview
+    } else {
+        String::from_utf8_lossy(body).into_owned()
     }
-    body
 }
 
 #[cfg(test)]
@@ -1143,10 +1144,10 @@ mod tests {
         assert_eq!(snapshot.remaining, 0.0);
         assert_eq!(snapshot.unit, "USD");
     }
-
     #[test]
     fn parse_console_timestamp_accepts_console_and_rfc3339() {
-        let expected = OffsetDateTime::parse("2026-10-24T23:59:59Z", &Rfc3339).expect("timestamp");
+        let expected =
+            OffsetDateTime::parse("2026-10-24T23:59:59Z", &Rfc3339).expect("timestamp");
         assert_eq!(
             parse_console_timestamp("2026-10-24 23:59:59"),
             Some(expected)
@@ -1160,6 +1161,14 @@ mod tests {
             Some(expected)
         );
         assert_eq!(parse_console_timestamp("not a timestamp"), None);
+    }
+
+    #[test]
+    fn body_preview_is_safe_at_multibyte_boundary() {
+        let body = "界".repeat(300);
+        let preview = body_preview(body.as_bytes());
+        assert!(preview.ends_with("..."));
+        assert!(preview.len() <= 518);
     }
 
     #[tokio::test]
