@@ -391,6 +391,7 @@ fn provider_title(id: &str) -> &str {
         "zai" => "z.ai",
         "opencode-go" => "OpenCode Go",
         "google" => "Google AI",
+        "xiaomi" => "Xiaomi MiMo",
         other => other,
     }
 }

@@ -12,6 +12,7 @@ braindrain-providers-google = { path = "../providers-google" }
 braindrain-providers-kimi = { path = "../providers-kimi" }
 braindrain-providers-openai = { path = "../providers-openai" }
 braindrain-providers-opencode-go = { path = "../providers-opencode-go" }
+braindrain-providers-xiaomi = { path = "../providers-xiaomi" }
 braindrain-providers-zai = { path = "../providers-zai" }
 thiserror = { workspace = true }
 time = { workspace = true }

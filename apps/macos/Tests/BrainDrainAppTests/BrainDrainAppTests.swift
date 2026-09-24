@@ -77,6 +77,7 @@ final class BrainDrainAppTests: XCTestCase {
             ProviderViewState(id: "zai"),
             ProviderViewState(id: "opencode-go"),
             ProviderViewState(id: "google"),
+            ProviderViewState(id: "xiaomi"),
         ]
         let overview = ProviderOverview(
             providers: providers,
@@ -93,7 +94,7 @@ final class BrainDrainAppTests: XCTestCase {
 
     @MainActor
     func testProviderPopoverKeepsItsHeightWhenShowingDetails() {
-        let providerIDs = ["openai", "claude", "cursor", "kimi", "zai", "opencode-go", "google"]
+        let providerIDs = ["openai", "claude", "cursor", "kimi", "zai", "opencode-go", "google", "xiaomi"]
         let overviewModel = ProviderListModel(providerIDs: providerIDs)
         let overviewController = NSHostingController(
             rootView: ProviderPopover(model: overviewModel)

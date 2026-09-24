@@ -14,6 +14,7 @@ web frontend.
 | [Z.ai Coding Plan](#zai-coding-plan)                                | `zai`         | `z.ai`                                      |
 | [OpenCode Go](#opencode-go)                                         | `opencode-go` | `opencode`, `zen-go`, `opencode-zen`        |
 | [Google AI / Gemini / Antigravity](#google-ai--gemini--antigravity) | `google`      | `google-ai`, `gemini`, `antigravity`, `agy` |
+| [Xiaomi MiMo Token Plan](#xiaomi-mimo-token-plan)                   | `xiaomi`      | `mimo`, `mimocode`, `xiaomi-token-plan`     |
 
 Run `braindrain providers` to list provider IDs. Use
 `braindrain info <provider>` to inspect local credential discovery and
@@ -149,6 +150,38 @@ a response with no usable measurements is reported as an error.
 You can also provide or override credentials via environment variables:
 `GOOGLE_AI_ACCESS_TOKEN` (or `GEMINI_ACCESS_TOKEN`), `GOOGLE_AI_REFRESH_TOKEN`,
 `GOOGLE_AI_PROJECT_ID` (or `GOOGLE_CLOUD_PROJECT`), and `GOOGLE_AI_BASE_URL`.
+
+### Xiaomi MiMo Token Plan
+
+Xiaomi's plan API key cannot query usage; usage numbers come from the Xiaomi web
+console and require a console cookie. Sign in at
+`https://platform.xiaomimimo.com`, copy the `Cookie` request header from browser
+devtools, and store it through BrainDrain's interactive prompt:
+
+```console
+braindrain auth login xiaomi
+braindrain check xiaomi
+```
+
+BrainDrain stores the cookie in the system keyring. Alternatively, set
+`XIAOMI_AUTH_COOKIE`; it takes precedence over the stored credential. The cookie
+expires in about a day, so re-run `braindrain auth login xiaomi` when checks
+start failing with an authentication error.
+
+For account identity and region, BrainDrain discovers the plan key saved by MiMo
+Code in `~/.local/share/mimocode/auth.json`, or
+`$XDG_DATA_HOME/mimocode/auth.json` when `XDG_DATA_HOME` is set. It accepts
+API-key entries named `xiaomi`, `xiaomi-token-plan`, or the regional
+`xiaomi-token-plan-*` ids. If none is found, it falls back to the same entry
+names in OpenCode's `~/.local/share/opencode/auth.json`, then to
+`XIAOMI_API_KEY`.
+
+The default console host is `https://platform.xiaomimimo.com`. Set
+`XIAOMI_CONSOLE_URL` to use another host. Plan and monthly token windows come
+from `tokenPlan/usage`, the plan period end and plan name from
+`tokenPlan/detail`, and the wallet balance from `balance`.
+
+Use `braindrain auth logout xiaomi` to remove the stored cookie.
 
 ## Web frontend
 

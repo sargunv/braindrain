@@ -13,6 +13,7 @@ members = [
   "crates/providers-kimi",
   "crates/providers-openai",
   "crates/providers-opencode-go",
+  "crates/providers-xiaomi",
   "crates/providers-zai",
   "crates/service",
   "crates/uniffi-bindgen",
