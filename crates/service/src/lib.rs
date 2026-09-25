@@ -21,6 +21,10 @@ use braindrain_providers_opencode_go::{
     OPENCODE_AUTH_COOKIE_ENV, OPENCODE_KEYCHAIN_ACCOUNT, OPENCODE_KEYCHAIN_SERVICE,
     OPENCODE_WORKSPACE_ID_ENV, OpenCodeGoCredentialsSource, OpenCodeGoProvider,
 };
+use braindrain_providers_xiaomi::{
+    XIAOMI_API_KEY_ENV, XIAOMI_AUTH_COOKIE_ENV, XIAOMI_CONSOLE_URL_ENV, XIAOMI_KEYCHAIN_ACCOUNT,
+    XIAOMI_KEYCHAIN_SERVICE, XiaomiAuthCookieSource, XiaomiPlanKeySource, XiaomiProvider,
+};
 use braindrain_providers_zai::{ZAI_API_KEY_ENV, ZaiApiKeySource, ZaiProvider};
 
 #[derive(Debug, thiserror::Error)]
@@ -54,6 +58,7 @@ pub fn provider_ids() -> Vec<ProviderId> {
         ProviderId::zai(),
         ProviderId::opencode_go(),
         ProviderId::google(),
+        ProviderId::xiaomi(),
     ]
 }
 
@@ -65,6 +70,10 @@ pub fn normalize_provider_id(provider: &str) -> ProviderId {
         "z.ai" => ProviderId::zai(),
         "opencode" | "zen-go" | "opencode-zen" => ProviderId::opencode_go(),
         "google-ai" | "gemini" | "antigravity" | "agy" => ProviderId::google(),
+        "mimo" | "mimocode" | "xiaomi-token-plan" => ProviderId::xiaomi(),
+        "xiaomi-token-plan-sgp" | "xiaomi-token-plan-cn" | "xiaomi-token-plan-ams" => {
+            ProviderId::xiaomi()
+        }
         provider => ProviderId::new(provider),
     }
 }
@@ -78,6 +87,7 @@ pub async fn info_provider(provider: &str) -> Result<ProviderInfo, ServiceError>
         ProviderId::ZAI => Ok(info_zai()),
         ProviderId::OPENCODE_GO => Ok(info_opencode_go().await),
         ProviderId::GOOGLE => Ok(info_google().await),
+        ProviderId::XIAOMI => Ok(info_xiaomi().await),
         provider => Err(ServiceError::UnsupportedProvider {
             provider: provider.to_owned(),
         }),
@@ -117,6 +127,10 @@ pub async fn check_provider(provider: &str) -> Result<ProviderSnapshot, ServiceE
                 std::sync::LazyLock::new(GoogleProvider::default);
             GOOGLE.refresh(context).await.map_err(ServiceError::from)
         }
+        ProviderId::XIAOMI => XiaomiProvider::default()
+            .refresh(context)
+            .await
+            .map_err(ServiceError::from),
         provider => Err(ServiceError::UnsupportedProvider {
             provider: provider.to_owned(),
         }),
@@ -126,6 +140,7 @@ pub async fn check_provider(provider: &str) -> Result<ProviderSnapshot, ServiceE
 pub fn credential_schema(provider: &str) -> Option<ProviderCredentialSchema> {
     match normalize_provider_id(provider).as_str() {
         ProviderId::OPENCODE_GO => Some(OpenCodeGoProvider::credential_schema()),
+        ProviderId::XIAOMI => Some(XiaomiProvider::credential_schema()),
         _ => None,
     }
 }
@@ -133,6 +148,9 @@ pub fn credential_schema(provider: &str) -> Option<ProviderCredentialSchema> {
 pub async fn store_credentials(credentials: ProviderCredentials) -> Result<(), ServiceError> {
     match credentials.provider.as_str() {
         ProviderId::OPENCODE_GO => OpenCodeGoProvider::store_credentials(credentials)
+            .await
+            .map_err(|error| ServiceError::Credential(error.to_string())),
+        ProviderId::XIAOMI => XiaomiProvider::store_credentials(credentials)
             .await
             .map_err(|error| ServiceError::Credential(error.to_string())),
         provider => Err(ServiceError::UnsupportedProvider {
@@ -144,6 +162,9 @@ pub async fn store_credentials(credentials: ProviderCredentials) -> Result<(), S
 pub async fn delete_credentials(provider: &str) -> Result<(), ServiceError> {
     match normalize_provider_id(provider).as_str() {
         ProviderId::OPENCODE_GO => OpenCodeGoProvider::delete_credentials()
+            .await
+            .map_err(|error| ServiceError::Credential(error.to_string())),
+        ProviderId::XIAOMI => XiaomiProvider::delete_credentials()
             .await
             .map_err(|error| ServiceError::Credential(error.to_string())),
         provider => Err(ServiceError::UnsupportedProvider {
@@ -413,6 +434,69 @@ async fn info_google() -> ProviderInfo {
     info
 }
 
+async fn info_xiaomi() -> ProviderInfo {
+    let provider = XiaomiProvider::default();
+    let mut info = ProviderInfo::new(ProviderId::xiaomi());
+    info.push("usage_url", provider.usage_url().to_string());
+    info.push("env_console_url", XIAOMI_CONSOLE_URL_ENV);
+    info.push("env_auth_cookie", XIAOMI_AUTH_COOKIE_ENV);
+    info.push("env_api_key", XIAOMI_API_KEY_ENV);
+    if let Some(path) = provider.config().mimocode_auth_path() {
+        info.push("mimocode_auth_path", path.display().to_string());
+    }
+    if let Some(path) = provider.config().opencode_auth_path() {
+        info.push("opencode_auth_path", path.display().to_string());
+    }
+    info.push("keyring_service", XIAOMI_KEYCHAIN_SERVICE);
+    info.push("keyring_account", XIAOMI_KEYCHAIN_ACCOUNT);
+
+    match provider.plan_key() {
+        Ok(key) => {
+            info.push("plan_key_found", "true");
+            info.push(
+                "plan_key_source",
+                match key.source {
+                    XiaomiPlanKeySource::Config => "config",
+                    XiaomiPlanKeySource::Mimocode => "mimocode",
+                    XiaomiPlanKeySource::Opencode => "opencode",
+                    XiaomiPlanKeySource::Environment(name) => name,
+                },
+            );
+            info.push("key_uid", key.uid.unwrap_or_else(|| "<unknown>".to_owned()));
+            info.push(
+                "key_base_url",
+                key.base_url
+                    .map(|url| url.to_string())
+                    .unwrap_or_else(|| "<unknown>".to_owned()),
+            );
+        }
+        Err(error) => {
+            info.push("plan_key_found", "false");
+            info.push("plan_key_error", error.to_string());
+        }
+    }
+
+    match provider.auth_cookie_async().await {
+        Ok(cookie) => {
+            info.push("auth_found", "true");
+            info.push(
+                "auth_source",
+                match cookie.source {
+                    XiaomiAuthCookieSource::Config => "config",
+                    XiaomiAuthCookieSource::Environment(name) => name,
+                    XiaomiAuthCookieSource::Keyring => "keyring",
+                },
+            );
+        }
+        Err(error) => {
+            info.push("auth_found", "false");
+            info.push("auth_error", error.to_string());
+        }
+    }
+
+    info
+}
+
 impl ProviderInfo {
     fn new(provider: ProviderId) -> Self {
         Self {
@@ -472,6 +556,20 @@ mod tests {
         );
         assert_eq!(normalize_provider_id("agy").as_str(), ProviderId::GOOGLE);
         assert_eq!(normalize_provider_id("google").as_str(), ProviderId::GOOGLE);
+        assert_eq!(normalize_provider_id("mimo").as_str(), ProviderId::XIAOMI);
+        assert_eq!(
+            normalize_provider_id("mimocode").as_str(),
+            ProviderId::XIAOMI
+        );
+        assert_eq!(
+            normalize_provider_id("xiaomi-token-plan").as_str(),
+            ProviderId::XIAOMI
+        );
+        assert_eq!(
+            normalize_provider_id("xiaomi-token-plan-sgp").as_str(),
+            ProviderId::XIAOMI
+        );
+        assert_eq!(normalize_provider_id("xiaomi").as_str(), ProviderId::XIAOMI);
     }
 
     #[test]
@@ -486,6 +584,7 @@ mod tests {
                 ProviderId::zai(),
                 ProviderId::opencode_go(),
                 ProviderId::google(),
+                ProviderId::xiaomi(),
             ]
         );
     }

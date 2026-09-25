@@ -617,6 +617,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "braindrain-providers-xiaomi"
+version = "0.1.0"
+dependencies = [
+ "braindrain-core",
+ "keyring",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "time",
+ "tokio",
+ "url",
+ "wiremock",
+]
+
+[[package]]
 name = "braindrain-providers-zai"
 version = "0.1.0"
 dependencies = [
@@ -643,6 +660,7 @@ dependencies = [
  "braindrain-providers-kimi",
  "braindrain-providers-openai",
  "braindrain-providers-opencode-go",
+ "braindrain-providers-xiaomi",
  "braindrain-providers-zai",
  "thiserror",
  "time",

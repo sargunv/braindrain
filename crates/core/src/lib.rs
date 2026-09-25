@@ -23,6 +23,7 @@ impl ProviderId {
     pub const ZAI: &'static str = "zai";
     pub const OPENCODE_GO: &'static str = "opencode-go";
     pub const GOOGLE: &'static str = "google";
+    pub const XIAOMI: &'static str = "xiaomi";
 
     pub fn new(id: impl Into<String>) -> Self {
         Self(id.into())
@@ -54,6 +55,10 @@ impl ProviderId {
 
     pub fn google() -> Self {
         Self::new(Self::GOOGLE)
+    }
+
+    pub fn xiaomi() -> Self {
+        Self::new(Self::XIAOMI)
     }
 
     pub fn as_str(&self) -> &str {

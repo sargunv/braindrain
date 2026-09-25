@@ -125,6 +125,8 @@ struct ProviderViewState: Identifiable {
             "OpenCode Go"
         case "google":
             "Google AI"
+        case "xiaomi":
+            "Xiaomi MiMo"
         default:
             id
         }

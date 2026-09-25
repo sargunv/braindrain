@@ -542,6 +542,9 @@ PlasmoidItem {
     if (provider === "google") {
       return "Google AI";
     }
+    if (provider === "xiaomi") {
+      return "Xiaomi MiMo";
+    }
     return provider || "";
   }
 
